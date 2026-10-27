@@ -61,6 +61,7 @@ const revision = createHash('sha256').update(readFileSync(join(out,'workspace.js
 const sourceRevision = execFileSync('git',['rev-parse','HEAD'],{cwd:repoRoot,encoding:'utf8'}).trim()
 const sourceDirty = Boolean(execFileSync('git',['status','--porcelain'],{cwd:repoRoot,encoding:'utf8'}).trim())
 const files = {}
+writeFileSync(join(out,'THIRD_PARTY_NOTICES.txt'),'GameDevBuddy AI includes code derived from NousResearch/hermes-agent.\nOriginal MIT licence follows.\n\n'+readFileSync(join(repoRoot,'LICENSE'),'utf8'))
 function inventory(folder, prefix='') {
   for (const entry of readdirSync(folder,{withFileTypes:true})) {
     const name = prefix + entry.name
