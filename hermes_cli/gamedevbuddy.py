@@ -161,7 +161,17 @@ def main() -> int:
         print(json.dumps({"product": PRODUCT, "state": "stop_timeout", "pid": before.get("pid")}))
         return 1
     action = ["ensure", "--json"] if args.action == "start" else [args.action]
-    return subprocess.call([sys.executable, "-B", "-m", "hermes_cli.main", "gateway", *action], env=runtime_environment())
+    from hermes_cli._launchers import runtime_command
+    command = runtime_command(Path(__file__).resolve().parents[1], ["gateway", *action],
+                              python=sys.executable, home=args.home.resolve())
+    child = subprocess.Popen(command, env=runtime_environment())
+    try:
+        return child.wait(timeout=120)
+    except subprocess.TimeoutExpired:
+        # A slow owner handshake is not permission to kill or replay it.
+        print(json.dumps({"product": PRODUCT, "state": "command_timeout",
+                          "pid": child.pid, "gatewayState": "unknown"}))
+        return 1
 
 
 if __name__ == "__main__":
