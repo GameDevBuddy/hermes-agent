@@ -1,8 +1,9 @@
+import { desktopSurface } from '@/gamedevbuddy/host'
 import { useEffect, useState } from 'react'
 
 import { useThemeEpoch } from '@/hooks/use-theme-epoch'
 
-const isDarkNow = () => typeof document !== 'undefined' && document.documentElement.classList.contains('dark')
+const isDarkNow = () => typeof document !== 'undefined' && desktopSurface().classList.contains('dark')
 
 // Tracks the app's dark/light mode off the `dark` class on <html> (set by
 // themes/context.tsx). Embeds that theme their own content (tweets) read this.

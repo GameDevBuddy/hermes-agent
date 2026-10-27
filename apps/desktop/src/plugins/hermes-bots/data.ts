@@ -1,3 +1,4 @@
+import { gameDevBuddyHost } from '@/gamedevbuddy/host'
 /**
  * Bot Mode's domain layer: the roster query, bot metadata storage, the
  * identity keys everything else is filed under, and needs-attention state.
@@ -1178,6 +1179,7 @@ export function mergeMultiSourceRoster(
  *  callable alias is 'hermes' — the mention middleware resolves it back to
  *  'default' — so the word 'default' never surfaces in the UI. */
 export function botHandle(name: string, bot?: Partial<RosterRow> | null): string {
+  if (gameDevBuddyHost() && (name || '').trim().toLowerCase() === 'default') {return 'stumpy'}
   if (bot?.handle && bot.handle !== name) {
     return bot.handle
   }

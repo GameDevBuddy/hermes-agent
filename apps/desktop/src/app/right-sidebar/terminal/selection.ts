@@ -1,3 +1,4 @@
+import { desktopSurfaceBody } from '@/gamedevbuddy/host'
 import type { ITheme, Terminal } from '@xterm/xterm'
 import type { CSSProperties } from 'react'
 
@@ -85,14 +86,14 @@ export function terminalTheme(mode: 'light' | 'dark', palette?: DesktopTerminalP
 // resolve via getComputedStyle, so probe a real background-color. Read AFTER
 // applyTheme repaints (mount / rAF post-change) or it lags a frame behind.
 export function resolveSurfaceColor(fallback: string): string {
-  if (typeof document === 'undefined' || !document.body) {
+  if (typeof document === 'undefined' || !desktopSurfaceBody()) {
     return fallback
   }
 
   const probe = document.createElement('span')
   probe.style.cssText =
     'position:absolute;visibility:hidden;pointer-events:none;background-color:var(--ui-terminal-surface-background)'
-  document.body.appendChild(probe)
+  desktopSurfaceBody().appendChild(probe)
   const resolved = getComputedStyle(probe).backgroundColor
   probe.remove()
 

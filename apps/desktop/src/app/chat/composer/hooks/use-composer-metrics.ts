@@ -1,3 +1,4 @@
+import { desktopSurface } from '@/gamedevbuddy/host'
 import { useAuiState } from '@assistant-ui/react'
 import { type RefObject, useCallback, useEffect, useRef, useState } from 'react'
 
@@ -74,7 +75,7 @@ function composerFit(composer: HTMLElement, width: number): ComposerFit {
   const token = getComputedStyle(composer).getPropertyValue('--composer-control-size').trim()
 
   const size =
-    parseFloat(token) * (token.endsWith('rem') ? parseFloat(getComputedStyle(document.documentElement).fontSize) : 1)
+    parseFloat(token) * (token.endsWith('rem') ? parseFloat(getComputedStyle(desktopSurface()).fontSize) : 1)
 
   return fitForWidth(width, Number.isFinite(size) ? size : DESKTOP_CONTROL_PX)
 }

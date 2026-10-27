@@ -1,3 +1,4 @@
+import { desktopSurfaceBody } from '@/gamedevbuddy/host'
 import { useStore } from '@nanostores/react'
 import { type CSSProperties, type ReactNode, useEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
@@ -156,7 +157,7 @@ function TopCenterStack({
         </div>
       )}
     </div>,
-    document.body
+    desktopSurfaceBody()
   )
 }
 
@@ -203,7 +204,7 @@ function BottomRightStack({
       )}
       <NotificationDeck expanded={expanded} notifications={notifications} />
     </div>,
-    document.body
+    desktopSurfaceBody()
   )
 }
 

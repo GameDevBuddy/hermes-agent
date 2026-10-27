@@ -1,3 +1,4 @@
+import { ownsDesktopEvent } from '@/gamedevbuddy/host'
 import { useEffect, useRef } from 'react'
 
 /**
@@ -15,6 +16,7 @@ export function useRefreshHotkey(onRefresh: () => void, enabled = true) {
     }
 
     const onKeyDown = (event: KeyboardEvent) => {
+      if (!ownsDesktopEvent(event)) {return}
       if (event.key !== 'r' && event.key !== 'R') {
         return
       }

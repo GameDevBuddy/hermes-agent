@@ -1,3 +1,4 @@
+import { gameDevBuddyHost } from '@/gamedevbuddy/host'
 import { gaugeScope, gaugeTitle, PAYMENT_PAUSE_REASON } from '@hermes/shared'
 import { useStore } from '@nanostores/react'
 import { useQuery } from '@tanstack/react-query'
@@ -187,7 +188,7 @@ export function useBillingState(enabled = true) {
   return useQuery({
     ...BILLING_QUERY_OPTIONS,
     ...(pausedForStepUp ? { refetchInterval: false, refetchOnWindowFocus: false } : {}),
-    enabled,
+    enabled: enabled && !gameDevBuddyHost(),
     queryFn: () => api.fetchBillingState(),
     queryKey: ['billing', 'state']
   })
@@ -198,7 +199,7 @@ export function useSubscriptionState(enabled = true) {
 
   return useQuery({
     ...BILLING_QUERY_OPTIONS,
-    enabled,
+    enabled: enabled && !gameDevBuddyHost(),
     queryFn: () => api.fetchSubscriptionState(),
     queryKey: ['billing', 'subscription']
   })

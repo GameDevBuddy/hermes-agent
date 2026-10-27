@@ -1,3 +1,4 @@
+import { desktopSurfaceBody } from '@/gamedevbuddy/host'
 import './tooltip.css'
 
 import { Tooltip as TooltipPrimitive } from 'radix-ui'
@@ -152,7 +153,7 @@ function hasLayout(element: Element | null): boolean {
 
 function TooltipContent(props: TooltipContentProps) {
   return (
-    <TooltipPrimitive.Portal>
+    <TooltipPrimitive.Portal container={desktopSurfaceBody()}>
       <PaneClippedContent {...props} />
     </TooltipPrimitive.Portal>
   )

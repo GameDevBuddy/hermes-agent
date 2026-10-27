@@ -1,3 +1,4 @@
+import { desktopSurface, desktopSurfaceBody } from '@/gamedevbuddy/host'
 /**
  * Soft focus / type-to-focus for the chat composer.
  *
@@ -93,7 +94,7 @@ export const visibleClarifyCard = (): HTMLElement | null => {
 export function isActivateOnEnterTarget(target: EventTarget | null): boolean {
   const el = target as HTMLElement | null
 
-  return Boolean(el && el !== document.body && el !== document.documentElement && el.closest(ENTER_ACTIVATES))
+  return Boolean(el && el !== desktopSurfaceBody() && el !== desktopSurface() && el.closest(ENTER_ACTIVATES))
 }
 
 /**

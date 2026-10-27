@@ -1,4 +1,5 @@
 import type { DesktopProfileRoute } from '@/global'
+import { gameDevBuddyHost } from '@/gamedevbuddy/host'
 
 import { browserStartupProfileKey, readBrowserStartupProfile, requireProfileRoute } from './browser-startup-profile'
 
@@ -31,6 +32,7 @@ export function createBrowserProfileBridge({
 
   const remember = async (profile: string | null) => {
     const selected = profile?.trim() || null
+    if (gameDevBuddyHost()) {return { profile: selected }}
     const url = new URL(window.location.href)
     setUrlProfile(url, selected)
     // Keep react-router's entry state (idx/key/usr): only the URL changes.

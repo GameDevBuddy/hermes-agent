@@ -1,3 +1,4 @@
+import { desktopSurfaceBody } from '@/gamedevbuddy/host'
 import { useStore } from '@nanostores/react'
 import { useEffect, useRef, useState } from 'react'
 import { useLocation } from 'react-router'
@@ -144,7 +145,7 @@ export function FindBar() {
     // childList mutations only (no attributes/characterData), and the bar is
     // a transient overlay, so the observer lives only for the find session.
     const mutationObserver = new MutationObserver(scheduleMeasure)
-    mutationObserver.observe(document.body, { childList: true, subtree: true })
+    mutationObserver.observe(desktopSurfaceBody(), { childList: true, subtree: true })
 
     measure()
     window.addEventListener('resize', scheduleMeasure)

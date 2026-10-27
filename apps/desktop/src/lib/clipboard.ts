@@ -1,3 +1,4 @@
+import { desktopSurfaceBody } from '@/gamedevbuddy/host'
 import { isBrowserHostedDesktop } from '@/lib/platform'
 
 // Primitives and CopyButton enter one policy, never nested fallback retries.
@@ -18,7 +19,7 @@ export function copyTextThroughSelection(text: string): boolean {
   }
 
   const active = document.activeElement
-  const focused = active instanceof HTMLElement && active !== document.body ? active : null
+  const focused = active instanceof HTMLElement && active !== desktopSurfaceBody() ? active : null
   const selection = document.getSelection()
   const ranges = Array.from({ length: selection?.rangeCount ?? 0 }, (_, index) => selection!.getRangeAt(index))
   const area = document.createElement('textarea')
@@ -26,7 +27,7 @@ export function copyTextThroughSelection(text: string): boolean {
   area.setAttribute('readonly', '')
   area.style.cssText = 'position:fixed;top:0;left:0;width:1px;height:1px;padding:0;border:0;opacity:0'
   const holds = focused && !focused.isContentEditable && !focused.matches(FOCUSABLE_LEAVES)
-  const scope = (holds ? focused : focused?.parentElement) ?? document.body
+  const scope = (holds ? focused : focused?.parentElement) ?? desktopSurfaceBody()
   scope.append(area)
   area.focus({ preventScroll: true })
   area.select()

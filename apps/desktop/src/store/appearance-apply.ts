@@ -1,3 +1,4 @@
+import { desktopSurface } from '@/gamedevbuddy/host'
 /**
  * What `set_theme` and its picker cards change: accent, light/dark mode and
  * layout preset, validated as a whole before anything is applied so an
@@ -51,7 +52,7 @@ function paintsDark(mode: ThemeMode | undefined): boolean {
     return matchesQuery('(prefers-color-scheme: dark)')
   }
 
-  return mode === undefined ? document.documentElement.classList.contains('dark') : mode === 'dark'
+  return mode === undefined ? desktopSurface().classList.contains('dark') : mode === 'dark'
 }
 
 // The first-run demo layout is borrowed (components/onboarding/first-run/intro.ts registers this): a

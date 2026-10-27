@@ -147,7 +147,7 @@ const preamble = () => `  var w = window;
   // scrollend does not bubble.
   var restAfterScroll = function () {
     return new Promise(function (resolve) {
-      var sc = document.scrollingElement || document.documentElement;
+      var sc = document.scrollingElement || desktopSurface();
       var x0 = sc ? sc.scrollLeft : 0;
       var y0 = sc ? sc.scrollTop : 0;
       requestAnimationFrame(function () {
@@ -704,7 +704,7 @@ function hitNote(hit?: { tag: string; trusted: boolean } | null): string | undef
 function buildScrollAnchorScript(): string {
   return `(function () {
 ${preamble()}
-  var sc = document.scrollingElement || document.documentElement;
+  var sc = document.scrollingElement || desktopSurface();
   var track = sc.clientHeight || window.innerHeight;
   return Promise.resolve(JSON.stringify({
     page: Math.round(window.innerHeight * 0.9),

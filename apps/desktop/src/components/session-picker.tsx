@@ -1,3 +1,4 @@
+import { desktopSurfaceBody } from '@/gamedevbuddy/host'
 import { useQuery } from '@tanstack/react-query'
 import { Dialog as DialogPrimitive } from 'radix-ui'
 import { useEffect, useMemo, useState } from 'react'
@@ -44,7 +45,7 @@ export function SessionPickerDialog({ activeStoredSessionId, onOpenChange, onRes
 
   return (
     <DialogPrimitive.Root onOpenChange={onOpenChange} open={open}>
-      <DialogPrimitive.Portal>
+      <DialogPrimitive.Portal container={desktopSurfaceBody()}>
         <DialogPrimitive.Overlay className="fixed inset-0 z-(--z-over-modal) bg-black/15 backdrop-blur-[1px] data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:animate-in data-[state=open]:fade-in-0" />
         <DialogPrimitive.Content
           aria-describedby={undefined}

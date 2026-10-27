@@ -1,3 +1,4 @@
+import { desktopSurface } from '@/gamedevbuddy/host'
 /**
  * Desktop theme context.
  *
@@ -316,7 +317,7 @@ function applyTheme(theme: DesktopTheme, mode: 'light' | 'dark', chatFontFamily 
     return
   }
 
-  const root = document.documentElement
+  const root = desktopSurface()
   const c = theme.colors
   const typo = { ...DEFAULT_TYPOGRAPHY, ...nousTheme.typography, ...theme.typography }
   const rendered = renderedModeFor(c, mode)

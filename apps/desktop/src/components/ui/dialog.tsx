@@ -1,3 +1,4 @@
+import { desktopSurfaceBody } from '@/gamedevbuddy/host'
 import { Dialog as DialogPrimitive } from 'radix-ui'
 import * as React from 'react'
 
@@ -16,7 +17,7 @@ function DialogTrigger({ ...props }: React.ComponentProps<typeof DialogPrimitive
 }
 
 function DialogPortal({ ...props }: React.ComponentProps<typeof DialogPrimitive.Portal>) {
-  return <DialogPrimitive.Portal data-slot="dialog-portal" {...props} />
+  return <DialogPrimitive.Portal container={desktopSurfaceBody()} data-slot="dialog-portal" {...props} />
 }
 
 function DialogClose({ ...props }: React.ComponentProps<typeof DialogPrimitive.Close>) {
@@ -130,7 +131,7 @@ function DialogContent({
 
   // Publish the dialog's content node so popovers (Select / Popover /
   // DropdownMenu) opened inside it portal INTO the dialog instead of
-  // document.body. That keeps them as DOM descendants — focus never leaves the
+  // desktopSurfaceBody(). That keeps them as DOM descendants — focus never leaves the
   // dialog, so dismissing a dropdown (or clicking another field) no longer
   // trips the Dialog's outside-interaction/focus-out close. See
   // dialog-portal-context.ts. State (not just a ref) so consumers re-render once

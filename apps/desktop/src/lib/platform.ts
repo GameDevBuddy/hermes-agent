@@ -1,3 +1,6 @@
+import { desktopSurface } from '@/gamedevbuddy/host'
+import { gameDevBuddyHost } from '@/gamedevbuddy/host'
+
 /**
  * Platform detection for the renderer.
  *
@@ -35,6 +38,7 @@ export interface BrowserHostGlobals {
  * HERMES_HOME), which the browser host reads as `default`.
  */
 export function browserLaunchProfile(): string {
+  if (gameDevBuddyHost()) {return gameDevBuddyHost()?.profile || 'default'}
   return String((window as Window & BrowserHostGlobals).__HERMES_DASHBOARD_PROFILE__ ?? '').trim()
 }
 
@@ -53,7 +57,7 @@ export function browserLaunchProfileOrDefault(): string {
 export function hasBrowserHostBootstrap(): boolean {
   const win = window as Window & BrowserHostGlobals
 
-  return win.__HERMES_AUTH_REQUIRED__ === true || win.__HERMES_UI_SURFACE__ === 'webapp'
+  return Boolean(gameDevBuddyHost()) || win.__HERMES_AUTH_REQUIRED__ === true || win.__HERMES_UI_SURFACE__ === 'webapp'
 }
 
 /** Renderer host, independent of the OS or the gateway's connection mode. */
@@ -65,7 +69,7 @@ export function isBrowserHostedDesktop() {
   // The bridge writes the marker once it installs. During static module
   // evaluation, use the browser bootstrap globals too; otherwise an OS check
   // can classify a browser page as native before the marker is written.
-  return document.documentElement.dataset.hermesDesktopHost === 'browser' ||
+  return desktopSurface().dataset.hermesDesktopHost === 'browser' ||
     (!window.hermesDesktop && hasBrowserHostBootstrap())
 }
 

@@ -1,3 +1,4 @@
+import { desktopSurface } from '@/gamedevbuddy/host'
 import { type PointerEvent as ReactPointerEvent, type RefObject, useCallback, useEffect, useRef, useState } from 'react'
 
 import {
@@ -185,7 +186,7 @@ export function useComposerPopoutGestures({
         return
       }
 
-      const rem = parseFloat(getComputedStyle(document.documentElement).fontSize) || 16
+      const rem = parseFloat(getComputedStyle(desktopSurface()).fontSize) || 16
       const rect = composer.getBoundingClientRect()
       const boxWidth = POPOUT_WIDTH_REM * rem
       const boxHeight = POPOUT_ESTIMATED_HEIGHT

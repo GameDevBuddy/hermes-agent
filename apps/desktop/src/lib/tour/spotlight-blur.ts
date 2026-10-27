@@ -1,3 +1,4 @@
+import { desktopSurfaceBody } from '@/gamedevbuddy/host'
 /**
  * SPOTLIGHT BLUR — a blurred scrim that keeps the highlighted element crisp.
  *
@@ -108,7 +109,7 @@ function mount(): void {
 
   mask.append(outer, hole)
   svg.append(filter, mask)
-  document.body.appendChild(svg)
+  desktopSurfaceBody().appendChild(svg)
 
   const layer = document.createElement('div')
 
@@ -125,7 +126,7 @@ function mount(): void {
     `-webkit-mask:url(#${MASK_ID})`
   ].join(';')
 
-  document.body.appendChild(layer)
+  desktopSurfaceBody().appendChild(layer)
 }
 
 /** Move the feathered hole onto `stage`. Four attribute writes. */

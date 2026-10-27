@@ -1,3 +1,4 @@
+import { desktopSurface } from '@/gamedevbuddy/host'
 import { atom } from 'nanostores'
 
 import { chatSurfaceRoot } from '@/app/chat/surface-vars'
@@ -133,7 +134,7 @@ interface SetPositionOptions {
 }
 
 const clampRange = (value: number, lo: number, hi: number) => Math.min(Math.max(value, lo), Math.max(lo, hi))
-const rootFontSize = () => parseFloat(getComputedStyle(document.documentElement).fontSize) || 16
+const rootFontSize = () => parseFloat(getComputedStyle(desktopSurface()).fontSize) || 16
 
 /** The dock target stays in the owning pane even though the float spans the window. */
 export function readPopoutBounds(composer: Element | null): PopoutBounds | undefined {

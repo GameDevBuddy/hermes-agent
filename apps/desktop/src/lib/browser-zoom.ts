@@ -1,3 +1,4 @@
+import { desktopSurface } from '@/gamedevbuddy/host'
 import { readKey, writeKey } from './storage'
 
 type ZoomState = { level: number; percent: number }
@@ -15,7 +16,7 @@ export function createBrowserZoom(basePath: string): NonNullable<Window['hermesD
 
   const apply = (value: number) => {
     percent = normalize(value)
-    document.documentElement.style.zoom = String(percent / 100)
+    desktopSurface().style.zoom = String(percent / 100)
   }
 
   // Private browsing can deny storage; the current tab can still scale.

@@ -1,3 +1,4 @@
+import { desktopSurface } from '@/gamedevbuddy/host'
 /**
  * Window translucency (see-through window).
  *
@@ -187,7 +188,7 @@ let railTarget: Element | null = null
 let railTrackingOn = false
 
 const measureRailEdge = (): void => {
-  const root = document.documentElement
+  const root = desktopSurface()
   const rail = document.querySelector('[data-slot="sidebar"]')
 
   if (rail !== railTarget) {
@@ -259,7 +260,7 @@ const stopRailTracking = (): void => {
 
   railTarget = null
   window.removeEventListener('resize', measureRailEdge)
-  document.documentElement.style.removeProperty('--glass-rail-edge')
+  desktopSurface().style.removeProperty('--glass-rail-edge')
 }
 
 /* Peek: while the user is actively adjusting translucency from Settings, the
@@ -316,7 +317,7 @@ const applyGlassSurfaces = ({ intensity, mode, scope }: TranslucencyState): void
     return
   }
 
-  const root = document.documentElement
+  const root = desktopSurface()
   // Is the user's Glass setting live at all — the same answer in every window.
   const glassLive = mode === 'glass' && intensity > 0 && GLASS_SUPPORTED
   // ...and may THIS window's field surfaces be rewritten for it. Only real
@@ -419,6 +420,6 @@ if (typeof window !== 'undefined') {
       return
     }
 
-    document.documentElement.toggleAttribute(PEEK_ATTR, count > 0)
+    desktopSurface().toggleAttribute(PEEK_ATTR, count > 0)
   })
 }

@@ -1,3 +1,4 @@
+import { desktopSurface } from '@/gamedevbuddy/host'
 'use client'
 
 import * as React from 'react'
@@ -307,13 +308,13 @@ function tokenStyle({ bgColor, color, fontStyle = 0 }: ThemedToken): React.CSSPr
 }
 
 function useThemeName() {
-  const current = () => (document.documentElement.classList.contains('dark') ? SHIKI_THEME.dark : SHIKI_THEME.light)
+  const current = () => (desktopSurface().classList.contains('dark') ? SHIKI_THEME.dark : SHIKI_THEME.light)
   const [theme, setTheme] = React.useState(current)
 
   React.useEffect(() => {
     const observer = new MutationObserver(() => setTheme(current()))
 
-    observer.observe(document.documentElement, { attributeFilter: ['class'], attributes: true })
+    observer.observe(desktopSurface(), { attributeFilter: ['class'], attributes: true })
 
     return () => observer.disconnect()
   }, [])

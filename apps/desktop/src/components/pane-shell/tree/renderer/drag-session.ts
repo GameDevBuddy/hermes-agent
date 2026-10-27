@@ -1,3 +1,4 @@
+import { desktopSurfaceBody } from '@/gamedevbuddy/host'
 /**
  * THE in-app drag primitive. One pointer-capture session (`startDragSession`)
  * owns the machinery every in-app drag shares — threshold, rAF-coalesced
@@ -226,8 +227,8 @@ export function startDragSession(e: ReactPointerEvent<HTMLElement>, spec: DragSe
   const { pointerId } = e
   const sx = e.clientX
   const sy = e.clientY
-  const restoreCursor = document.body.style.cursor
-  const restoreSelect = document.body.style.userSelect
+  const restoreCursor = desktopSurfaceBody().style.cursor
+  const restoreSelect = desktopSurfaceBody().style.userSelect
   let engaged = false
   let releaseEscapeLayer: (() => void) | null = null
   let releaseGuests: (() => void) | null = null
@@ -242,7 +243,7 @@ export function startDragSession(e: ReactPointerEvent<HTMLElement>, spec: DragSe
   const setCursor = (value: string) => {
     if (cursor !== value) {
       cursor = value
-      document.body.style.cursor = value
+      desktopSurfaceBody().style.cursor = value
     }
   }
 
@@ -270,7 +271,7 @@ export function startDragSession(e: ReactPointerEvent<HTMLElement>, spec: DragSe
     }
 
     setCursor('grabbing')
-    document.body.style.userSelect = 'none'
+    desktopSurfaceBody().style.userSelect = 'none'
     // Webview/iframe guests hit-test in their own process — dragging a tab
     // across the in-app browser would go silent without this.
     releaseGuests = guardGuestPointers()
@@ -332,8 +333,8 @@ export function startDragSession(e: ReactPointerEvent<HTMLElement>, spec: DragSe
       flushMove()
     }
 
-    document.body.style.cursor = restoreCursor
-    document.body.style.userSelect = restoreSelect
+    desktopSurfaceBody().style.cursor = restoreCursor
+    desktopSurfaceBody().style.userSelect = restoreSelect
     ghost?.destroy()
     ghost = null
     releaseEscapeLayer?.()

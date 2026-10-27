@@ -1,3 +1,5 @@
+import { ownsDesktopEvent } from '@/gamedevbuddy/host'
+import { desktopSurface, desktopSurfaceBody } from '@/gamedevbuddy/host'
 import { useEffect, useRef } from 'react'
 import { useLocation, useNavigate } from 'react-router'
 
@@ -454,7 +456,7 @@ export function useKeybinds(deps: KeybindRuntimeDeps): void {
 
   useEffect(() => {
     const stopF12Shortcut = window.hermesDesktop?.onF12Shortcut?.(input => {
-      const target = document.activeElement ?? document.body ?? document.documentElement
+      const target = document.activeElement ?? desktopSurfaceBody() ?? desktopSurface()
       target.dispatchEvent(
         new KeyboardEvent('keydown', {
           altKey: input.alt,
@@ -475,6 +477,7 @@ export function useKeybinds(deps: KeybindRuntimeDeps): void {
 
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
+      if (!ownsDesktopEvent(event)) {return}
       // An active IME composition owns the keyboard. Windows Chinese IMEs
       // (Microsoft Pinyin, Sogou) use Ctrl+, as their punctuation-mode toggle,
       // so without this guard that keystroke ALSO matched `nav.settings` and
@@ -619,6 +622,7 @@ export function useKeybinds(deps: KeybindRuntimeDeps): void {
     // highlighted session. A window blur (Cmd+Tab away mid-switch) cancels so
     // the overlay never gets stranded waiting for a keyup that never comes.
     const onKeyUp = (event: KeyboardEvent) => {
+      if (!ownsDesktopEvent(event)) {return}
       if (event.key === 'Enter' || event.key === 'Escape') {
         releaseApprovalKey()
       }
@@ -642,6 +646,7 @@ export function useKeybinds(deps: KeybindRuntimeDeps): void {
 
     // Swallow trailing contextmenu after Ctrl+click commit (Electron main menu).
     const onContextMenu = (event: MouseEvent) => {
+      if (!ownsDesktopEvent(event)) {return}
       if ($switcherOpen.get() || switcherJustClosed()) {
         event.preventDefault()
         event.stopPropagation()

@@ -1,3 +1,4 @@
+import { desktopSurface, gameDevBuddyHost } from '@/gamedevbuddy/host'
 /** Fit the browser app to the visible area when a keyboard leaves layout height
  * unchanged. `interactive-widget=resizes-content` handles supporting browsers;
  * VisualViewport covers the others. Pan/zoom stays with the browser: a pinch
@@ -5,9 +6,9 @@
  */
 export function installBrowserViewport(): () => void {
   const viewport = window.visualViewport
-  const root = document.getElementById('root')
+  const root = gameDevBuddyHost()?.element ?? document.getElementById('root')
 
-  if (!viewport || !root || document.documentElement.dataset.hermesDesktopHost !== 'browser') {
+  if (!viewport || !root || desktopSurface().dataset.hermesDesktopHost !== 'browser') {
     return () => {}
   }
 
@@ -57,7 +58,7 @@ export function installBrowserViewport(): () => void {
     }
 
     // Hermes' UI scale is CSS zoom on <html>, separate from pinch zoom.
-    const zoom = Number.parseFloat(getComputedStyle(document.documentElement).zoom) || 1
+    const zoom = Number.parseFloat(getComputedStyle(desktopSurface()).zoom) || 1
     root.style.setProperty('--browser-viewport-height', `${height / zoom}px`)
     root.style.setProperty('--browser-viewport-top', `${top / zoom}px`)
     root.setAttribute('data-browser-viewport', '')

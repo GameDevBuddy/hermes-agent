@@ -1,3 +1,4 @@
+import { gameDevBuddyHost } from '@/gamedevbuddy/host'
 import type { FreeTierClaimNudgeResult } from '@hermes/shared'
 import { atom } from 'nanostores'
 
@@ -116,6 +117,7 @@ const fail = (kind: FreeTierSignInFailure, message: null | string = null, retryA
  *  gateway requester and drives the flow. Re-entrant by design: a second click
  *  while a sign-in is already on screen must not restart it. */
 export function openFreeTierSignIn() {
+  if (gameDevBuddyHost()) {gameDevBuddyHost()?.openAccount(); return}
   if ($freeTierSignIn.get().status === 'closed') {
     set({ status: 'requested' })
   }

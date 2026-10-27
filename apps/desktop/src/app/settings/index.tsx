@@ -1,4 +1,6 @@
 import { useStore } from '@nanostores/react'
+import { gameDevBuddyHost } from '@/gamedevbuddy/host'
+import { GameDevBuddyAccountSettings } from '@/gamedevbuddy/account-settings'
 import { type ComponentType, useCallback, useEffect, useMemo, useRef } from 'react'
 import { Navigate, useLocation, useNavigate } from 'react-router'
 
@@ -584,7 +586,7 @@ export function SettingsView({ onClose, onConfigSaved, onMainModelChanged }: Set
   ) : activeView === 'keys' ? (
     <KeysSettings view={keysView} />
   ) : activeView === 'billing' ? (
-    <BillingSettings />
+    gameDevBuddyHost() ? <GameDevBuddyAccountSettings /> : <BillingSettings />
   ) : activeView === 'web-access' ? (
     <WebAccessSettings />
   ) : activeView === 'plugins' ? (

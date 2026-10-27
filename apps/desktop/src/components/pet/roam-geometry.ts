@@ -1,3 +1,4 @@
+import { desktopSurface } from '@/gamedevbuddy/host'
 /**
  * The "where can it stand" layer of the floating pet's wander: it measures the
  * live DOM for walkable surfaces and answers pure questions about them. Split
@@ -123,7 +124,7 @@ export function snapshotLedges(petW: number, petH: number): Ledge[] {
  * we derive it from that rather than measuring.
  */
 export function overlayLedge(petW: number): Ledge {
-  const rem = parseFloat(getComputedStyle(document.documentElement).fontSize) || 16
+  const rem = parseFloat(getComputedStyle(desktopSurface()).fontSize) || 16
   const inset = TITLEBAR_HEIGHT + (vw() >= 640 ? 0.875 : 0.625) * rem
 
   return { left: inset, right: Math.max(0, vw() - inset - petW), y: vh() - inset }

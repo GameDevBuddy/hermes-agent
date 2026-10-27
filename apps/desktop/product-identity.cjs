@@ -9,16 +9,16 @@
 'use strict'
 
 const variants = {
-  '': { display: 'Hermes', kebab: 'hermes', pascal: 'Hermes' },
+  '': { display: 'GameDevBuddy AI', kebab: 'gamedevbuddy-ai', pascal: 'GameDevBuddyAI' },
   light: {
-    display: 'Hermes Light',
-    kebab: 'hermes-light',
-    pascal: 'HermesLight'
+    display: 'GameDevBuddy AI Remote',
+    kebab: 'gamedevbuddy-ai-remote',
+    pascal: 'GameDevBuddyAIRemote'
   },
   bundled: {
-    display: 'Hermes Agent',
-    kebab: 'hermes-bundled',
-    pascal: 'HermesBundled'
+    display: 'GameDevBuddy AI',
+    kebab: 'gamedevbuddy-ai-local',
+    pascal: 'GameDevBuddyAILocal'
   }
 }
 
@@ -32,6 +32,9 @@ if (!['', 'light', 'bundled', 'store'].includes(variant)) {
 // userData + single-instance lock with the out-of-store install), different
 // MSIX package identity. The Store re-signs on submission.
 const store = variant === 'store'
+if (store && (!process.env.GDB_MSIX_IDENTITY_NAME || !process.env.GDB_MSIX_PUBLISHER)) {
+  throw new Error('GameDevBuddy Store builds require our own MSIX identity and signing publisher')
+}
 const light = variant === 'light'
 const name = variants[store ? 'bundled' : (variant || '')]
 
@@ -54,7 +57,7 @@ const displayName = buildCommit
 
 const kebabSuffix = buildCommit ? `-${buildCommit}` : canary ? '-canary' : ''
 const pascalSuffix = buildCommit ? `Commit${buildCommit}` : canary ? 'Canary' : ''
-const cliName = `${light ? 'hermes-light' : 'hermes'}${kebabSuffix}`
+const cliName = `${light ? 'gamedevbuddy-ai-remote' : 'gamedevbuddy-ai'}${kebabSuffix}`
 if (store && (canary || buildCommit)) {
   throw new Error('Store packaging is only eligible for stable releases')
 }
@@ -66,22 +69,22 @@ const identity = {
   store,
   light,
   displayName,
-  appId: `com.nousresearch.${name.kebab}${kebabSuffix}`,
+  appId: `com.gamedevbuddy.${name.kebab}${kebabSuffix}`,
   // Store and commit builds do not publish a release feed.
   channel: store || buildCommit ? null : light ? (canary ? 'light-canary' : 'light') : (canary ? 'canary' : 'latest'),
   appNamePascal: `${name.pascal}${pascalSuffix}`,
   artifactNamePascal: name.pascal,
   windowsExecutableName: kebabSuffix ? cliName : displayName,
   cliName,
-  msixAppIdWithOrg: `NousResearch.${name.pascal}${pascalSuffix}`,
+  msixAppIdWithOrg: `GameDevBuddy.${name.pascal}${pascalSuffix}`,
   ...(store
     ? {
         storeMsix: {
           // Partner Center publisher identity (the account's publisher ID) —
           // validated + re-signed by the Store on submission.
-          identityName: 'NousResearchInc.HermesAgent',
-          publisher: 'CN=EE6D86E4-606F-4E38-B940-AD7248C9D519',
-          publisherDisplayName: 'Nous Research Inc.'
+          identityName: process.env.GDB_MSIX_IDENTITY_NAME || '',
+          publisher: process.env.GDB_MSIX_PUBLISHER || '',
+          publisherDisplayName: 'GameDevBuddy'
         }
       }
     : {})

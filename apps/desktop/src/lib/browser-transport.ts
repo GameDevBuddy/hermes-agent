@@ -1,10 +1,12 @@
 import { BROWSER_NATIVE_DIAL, buildHermesWebSocketUrl, normalizeBasePath } from '@hermes/shared'
 
 import type { HermesApiRequest } from '@/global'
+import { gameDevBuddyHost, type GameDevBuddyAiHost } from '@/gamedevbuddy/host'
 import { readWebappSession, webappSignInRequired } from '@/lib/browser-launch-session'
 import { type BrowserHostGlobals, hasBrowserHostBootstrap } from '@/lib/platform'
 
 export interface BrowserBootstrap {
+  host?: GameDevBuddyAiHost
   authRequired: boolean
   basePath: string
   /** Webapp on an unauthenticated bind: the operator's launch link is the only credential source. */
@@ -28,6 +30,8 @@ export class BrowserReauthRequiredError extends Error {
 }
 
 export function browserBootstrap(): BrowserBootstrap | null {
+  const host = gameDevBuddyHost()
+  if (host) {return { get host() {return gameDevBuddyHost() ?? host}, authRequired: false, basePath: '/api/ai/engine/proxy', privateSession: false, token: '' }}
   if (!hasBrowserHostBootstrap()) {return null}
 
   const win = window as Window & BrowserHostGlobals
@@ -143,6 +147,21 @@ export async function browserFetch(
   bootstrap: BrowserBootstrap,
   request: BrowserFetchRequest
 ): Promise<{ response: Response; text: string }> {
+  if (bootstrap.host) {
+    const path = new URL(request.path, 'https://gdb.invalid')
+    if (path.origin !== 'https://gdb.invalid' || !path.pathname.startsWith('/api/')) {
+      throw new Error('Invalid GameDevBuddy AI API path')
+    }
+    if (request.profile && !path.searchParams.has('profile')) {path.searchParams.set('profile', request.profile)}
+    const controller = new AbortController()
+    const timer = window.setTimeout(() => controller.abort(), request.timeoutMs ?? DEFAULT_TIMEOUT_MS)
+    try {
+      const response = await bootstrap.host.request(path.pathname + path.search, {
+        method: request.method || 'GET', headers: request.headers, body: request.body, signal: controller.signal
+      })
+      return { response, text: await response.text() }
+    } finally {window.clearTimeout(timer)}
+  }
   if (!bootstrap.authRequired && !bootstrap.token) {throw webappSignInRequired()}
 
   const controller = request.timeoutMs === undefined ? null : new AbortController()
@@ -249,7 +268,7 @@ export async function fileEndpointUrl(
 
   Object.entries(params).forEach(([key, value]) => url.searchParams.set(key, value))
 
-  if (bootstrap.token) {
+  if (bootstrap.token || bootstrap.host) {
     const result = await browserApi<null | { ticket?: string }>(bootstrap, {
       body: { ...params, route },
       method: 'POST',
@@ -259,6 +278,7 @@ export async function fileEndpointUrl(
     const ticket = String(result?.ticket || '')
 
     if (!ticket) {throw new Error('Hermes did not return a file ticket')}
+    if (bootstrap.host) {return new URL(bootstrap.host.fileUrl(ticket), window.location.href)}
     url.searchParams.set('ticket', ticket)
   }
 
@@ -303,6 +323,12 @@ export async function ticketedWebsocketUrl(
 
   if (!ticket) {throw new Error(`Hermes did not return a ticket for ${path}`)}
 
+  if (bootstrap.host) {
+    const url = new URL(bootstrap.host.socketUrl(ticket))
+    if (gateway) {url.searchParams.set('native_dial', BROWSER_NATIVE_DIAL)}
+    return url.href
+  }
+
   if (!gateway) {return websocketUrl(bootstrap.basePath, path, { ticket }, profile)}
 
   const url = new URL(gatewaySocketUrl(bootstrap, profile))
@@ -313,6 +339,11 @@ export async function ticketedWebsocketUrl(
 
 /** The credential-free canonical socket URL a browser connection descriptor reports. */
 export function gatewaySocketUrl(bootstrap: BrowserBootstrap, profile?: null | string): string {
+  if (bootstrap.host) {
+    const url = new URL(bootstrap.host.socketUrl(''))
+    url.searchParams.set('native_dial', BROWSER_NATIVE_DIAL)
+    return url.href
+  }
   const url = new URL(websocketUrl(bootstrap.basePath, '/api/ws', {}, profile))
   url.searchParams.set('native_dial', BROWSER_NATIVE_DIAL)
 

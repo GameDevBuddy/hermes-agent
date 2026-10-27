@@ -1,3 +1,4 @@
+import { desktopSurfaceBody } from '@/gamedevbuddy/host'
 /** Use the existing browser-download -> Electron Save File workflow, not composer staging.
  * Mirrors downloadTextFile and #104199's attachment delivery without a new native IPC. */
 export function downloadCanonicalAttachment(bytes: Uint8Array<ArrayBuffer>, name: string, mime: string, signal?: AbortSignal) {
@@ -8,7 +9,7 @@ export function downloadCanonicalAttachment(bytes: Uint8Array<ArrayBuffer>, name
   link.download = name
   link.rel = 'noopener noreferrer'
   link.style.display = 'none'
-  document.body.appendChild(link)
+  desktopSurfaceBody().appendChild(link)
 
   try {
     if (!signal?.aborted) {link.click()}

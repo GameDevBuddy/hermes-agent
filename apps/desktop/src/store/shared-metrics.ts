@@ -1,5 +1,6 @@
 import type { SharedMetricsConsentResult } from '@hermes/shared'
 import { atom } from 'nanostores'
+import { gameDevBuddyHost } from '@/gamedevbuddy/host'
 
 import { recordOnboarding, setDesktopMetricsGate } from './desktop-metrics'
 
@@ -44,6 +45,7 @@ function isConsent(value: unknown): value is SharedMetricsConsent {
  * which every caller treats as "don't ask".
  */
 export async function readSharedMetricsConsent(request: SharedMetricsRequester): Promise<SharedMetricsConsent | null> {
+  if (gameDevBuddyHost()) {return null}
   try {
     const consent = await request<SharedMetricsConsent>('shared_metrics.status')
 
@@ -59,6 +61,7 @@ export async function saveSharedMetricsConsent(
   flags: { enabled: boolean; send: boolean },
   { firstRun = false }: { firstRun?: boolean } = {}
 ): Promise<SharedMetricsConsent> {
+  if (gameDevBuddyHost()) {throw new Error('Optional diagnostics are managed by GameDevBuddy, not an upstream service')}
   const consent = await request<SharedMetricsConsent>('shared_metrics.set', { ...flags, first_run: firstRun })
 
   if (!isConsent(consent)) {

@@ -1,3 +1,4 @@
+import { desktopSurfaceBody } from '@/gamedevbuddy/host'
 import { useStore } from '@nanostores/react'
 import { useQuery } from '@tanstack/react-query'
 import { Dialog as DialogPrimitive } from 'radix-ui'
@@ -1611,7 +1612,7 @@ function CommandPaletteBody({ onExited }: { onExited: () => void }) {
   }
 
   return (
-    <DialogPrimitive.Portal>
+    <DialogPrimitive.Portal container={desktopSurfaceBody()}>
       {/* Transparent overlay: keeps click-away + focus trap, but no dim/blur. */}
       <DialogPrimitive.Overlay className="fixed inset-0 z-(--z-over-modal)" />
       <DialogPrimitive.Content

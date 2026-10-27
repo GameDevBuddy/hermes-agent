@@ -1,3 +1,4 @@
+import { desktopSurface, gameDevBuddyHost } from '@/gamedevbuddy/host'
 import { externalUrlTarget } from '@hermes/shared'
 
 import type { HermesApiRequest } from '@/global'
@@ -67,6 +68,10 @@ export function installBrowserDesktopBridge(): boolean {
   // `file:` URL names the server's disk, and this browser cannot open it.
   const openExternal = async (url: string) => {
     const target = externalUrlTarget(url)
+    if (gameDevBuddyHost() && target?.kind === 'web' && new URL(target.url).hostname === 'portal.nousresearch.com') {
+      gameDevBuddyHost()?.openAccount()
+      return
+    }
 
     if (target?.kind === 'web') {window.open(target.url, '_blank', 'noopener,noreferrer')}
   }
@@ -75,6 +80,8 @@ export function installBrowserDesktopBridge(): boolean {
 
   const bridge: Window['hermesDesktop'] = {
     ...BROWSER_BRIDGE_STUBS,
+    // Browser hosting says nothing about the host application's GPU state.
+    ...(bootstrap.host ? { getRemoteDisplayReason: async () => null } : {}),
     ...createBrowserClipboardBridge({ saveBuffer: uploads.saveImageBuffer }),
     ...createBrowserConnectionBridge({ api, bootstrap }),
     ...createBrowserFilesBridge({ api, bootstrap, currentProfile }),
@@ -142,7 +149,7 @@ export function installBrowserDesktopBridge(): boolean {
   }
 
   window.hermesDesktop = bridge
-  document.documentElement.dataset.hermesDesktopHost = 'browser'
+  desktopSurface().dataset.hermesDesktopHost = 'browser'
 
   return true
 }
