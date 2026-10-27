@@ -29,6 +29,10 @@ Preparation preserves the full default toolset and skills. It creates only our m
 
 The client output is `apps/desktop/dist-gamedevbuddy`. Its manifest contains the source revision, dirty-source flag and SHA-256 inventory. Generated bundles and private runtime data are not source commits. Our app consumes an explicitly pinned fork revision.
 
+For the full companion runtime, prepare the exact commit through the canonical PM native-payload builder and build both TUI and web products. Consume those prepared inputs with `python -B -m scripts.bundles.gamedevbuddy --prepared <payload.prepared.json> --tui <built-tui> --web <built-web>`. This retains all target-compatible dependencies, tools, resources, existing commands and both frontends. It adds an isolated `bin/stumpy.py` entry, the legal notice and `gamedevbuddy-runtime.json`, which inventories every file, directory and portable internal link. It does not download dependencies or start the agent. Use a fresh assembly; published or interrupted output is never silently replaced.
+
+GameDevBuddy's app build tooling verifies this package against its source pin and target before copying it to a fresh staging directory, then verifies the copied bytes again. The staged immutable payload is separate from the user's writable GameDevBuddy home. Signed delivery, host provisioning and real runtime acceptance remain separate work.
+
 ## Current validation boundary
 
 The direct client, existing authenticated app API, real canonical gateway handshake and starter-profile metadata have been exercised in an isolated development home. Focused tests cover transport credential separation, one-use grants, revocation, normal host shutdown, safe configuration and preservation of user edits.

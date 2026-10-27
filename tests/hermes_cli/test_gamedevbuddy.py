@@ -32,13 +32,14 @@ def test_own_home_keeps_full_skills_and_preserves_existing_profile_and_config(tm
     assert soul.read_text() == "My own edited narrative bot\n"
 
 
-def test_unowned_existing_home_is_refused_without_writes(tmp_path, monkeypatch):
+@pytest.mark.parametrize("existing_name", ["config.yaml", ".env", "auth.json"])
+def test_unowned_existing_home_is_refused_without_writes(tmp_path, monkeypatch, existing_name):
     home = tmp_path / "existing"
     home.mkdir()
-    config = home / "config.yaml"
-    config.write_text("model: personal-existing-model\n")
+    config = home / existing_name
+    config.write_text("existing fixture-owned state\n")
     monkeypatch.setenv("HERMES_HOME", str(home))
     with pytest.raises(ValueError, match="unowned"):
         prepare_runtime(home)
-    assert sorted(p.name for p in home.iterdir()) == ["config.yaml"]
-    assert config.read_text() == "model: personal-existing-model\n"
+    assert sorted(p.name for p in home.iterdir()) == [existing_name]
+    assert config.read_text() == "existing fixture-owned state\n"

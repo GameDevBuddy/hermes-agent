@@ -61,16 +61,17 @@ def prepare_runtime(home: Path, *, port: int = 9120) -> dict:
         raise ValueError("GameDevBuddy requires its own runtime home")
     marker = home / MARKER
     config_path = home / "config.yaml"
-    if config_path.exists() and not marker.is_file():
-        raise ValueError("Existing unowned agent configuration will not be adopted")
+    if home.exists() and not marker.is_file() and any(home.iterdir()):
+        raise ValueError("Existing unowned agent home will not be adopted")
     if marker.is_file():
-        receipt = json.loads(marker.read_text(encoding="utf-8"))
+        receipt = json.loads(marker.read_text(encoding="utf-8-sig"))
         if receipt.get("product") != PRODUCT or receipt.get("home") != str(home):
             raise ValueError("GameDevBuddy runtime ownership does not match this home")
     os.environ["HERMES_HOME"] = str(home)
     os.environ.pop("HERMES_PROFILE", None)
     # Home binding MUST precede these imports; imports may cache profile policy.
     from hermes_cli.config import atomic_config_write, read_user_config_raw
+    from hermes_cli.config_backend import config_exists
     from hermes_cli.config_defaults import DEFAULT_CONFIG
     from hermes_cli.profiles import _get_profiles_root, create_profile, write_profile_meta
     from hermes_cli.observability.shared_metrics_consent import set_answer
@@ -81,7 +82,7 @@ def prepare_runtime(home: Path, *, port: int = 9120) -> dict:
         raise ValueError("Canonical profile root escaped the GameDevBuddy runtime")
     home.mkdir(parents=True, exist_ok=True)
     (home / "workspace").mkdir(exist_ok=True)
-    created = not config_path.exists()
+    created = not config_exists(config_path)
     if created:
         config = copy.deepcopy(DEFAULT_CONFIG)
         config["model"] = {"provider": "ollama", "base_url": "http://127.0.0.1:11434/v1", "default": ""}
@@ -98,7 +99,7 @@ def prepare_runtime(home: Path, *, port: int = 9120) -> dict:
         atomic_write_text(marker, json.dumps({"schema": 1, "product": PRODUCT, "home": str(home)}, indent=2) + "\n")
     from hermes_cli.default_soul import DEFAULT_SOUL_MD
     soul_path = home / "SOUL.md"
-    if not soul_path.exists() or (created and soul_path.read_text().strip() == DEFAULT_SOUL_MD.strip()):
+    if not soul_path.exists() or (created and soul_path.read_text(encoding="utf-8-sig").strip() == DEFAULT_SOUL_MD.strip()):
         atomic_write_text(soul_path, DEFAULT_SOUL_MD + "\n\n## GameDevBuddy project policy\n\n" + SOUL)
     added = []
     for name, (label, focus) in PACKS.items():
@@ -134,7 +135,7 @@ def main() -> int:
             return 0
     else:
         home = args.home.resolve()
-        receipt = json.loads((home / MARKER).read_text())
+        receipt = json.loads((home / MARKER).read_text(encoding="utf-8-sig"))
         if receipt.get("product") != PRODUCT or receipt.get("home") != str(home):
             raise ValueError("Not a GameDevBuddy runtime home")
         os.environ["HERMES_HOME"] = str(home)
