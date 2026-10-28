@@ -283,6 +283,7 @@ class _ToolCallRef:
     task_id: str
     call_id: str
     trace: list
+    canonical_commit: Any = None
 
     def middleware_kwargs(self) -> dict[str, Any]:
         """Keyword form ``_run_agent_tool_execution_middleware`` (and tests patching it) expect."""
@@ -475,6 +476,7 @@ class _ManagedToolResult:
     blocked: bool
     dispatched: bool
     data_use: frozenset[str] = frozenset()
+    dispatch_ref: Optional[_ToolCallRef] = None
 
 
 class _ToolTimeoutResult(str):
@@ -752,6 +754,7 @@ def _dispatch_authorized_once(
     from agent.terminal_approval_batch import prepare_current_terminal
     prepare_current_terminal(ref)
     _advance_start_order(lambda: _begin_tool_execution(agent, ref, display_index))
+    state.dispatch_ref = ref if ref.canonical_commit is not None else None
     from agent.tool_progress_relay import bound_tool_progress
     from tools.connectors.data_use import collect_data_use
     with bound_tool_progress(agent.tool_progress_callback, ref.name, ref.call_id), collect_data_use() as data_use:
@@ -1016,6 +1019,8 @@ def _safe_callback(callback, label: str, *args, **kwargs) -> None:
 
 def _begin_tool_execution(agent, ref: _ToolCallRef, display_index: int | None) -> None:
     """Run user-visible and checkpoint preflight on final tool arguments."""
+    from agent.tool_commit_owner import owner_call
+    ref.canonical_commit = owner_call(agent, "bind", ref)
     function_name, function_args, effective_task_id, tool_call_id = ref.name, ref.args, ref.task_id, ref.call_id
     display_args = _redact_tool_args_for_display(function_name, function_args) or function_args
     if _tool_progress_enabled(agent):
@@ -1095,6 +1100,8 @@ def _commit_tool_result(
     Returns ``(persisted_result, display_result, risk_metadata)`` (``display_result`` =
     pre-persist content for UI previews) or ``None`` when the flush failed (stop the batch).
     """
+    from agent.tool_commit_rows import text_digest
+    source_result_digest = text_digest(function_result) if ref.canonical_commit is not None else None
     function_name, function_args, tool_call_id, effective_task_id = ref.name, ref.args, ref.call_id, ref.task_id
     from hermes_cli.observability.shared_metrics_harness import observe_tool_outcome
 
@@ -1170,6 +1177,9 @@ def _commit_tool_result(
         except Exception as callback_error:
             logging.debug("Tool result metadata callback error: %s", callback_error)
     stamp_data_use(tool_message, sorted(data_use))
+    if ref.canonical_commit is not None:
+        from agent.tool_commit_owner import owner_call
+        owner_call(agent, "prepare", ref.canonical_commit, tool_message, source_result_digest)
     messages.append(tool_message)
     if not _flush_session_db_after_tool_progress(agent, messages, stage=f"tool result {function_name}"):
         return None
@@ -1371,6 +1381,8 @@ class _ConcurrentBatch:
                 begin_execution=start_gate.advance,
                 authorization_gate=self.authorization_gate,
             )
+            if managed.dispatch_ref is not None:
+                ref = managed.dispatch_ref
             result, ref.args, ref.trace = managed.result, managed.args, managed.middleware_trace
             blocked, dispatched, data_use = managed.blocked, managed.dispatched, managed.data_use
         except _BatchAbandoned:
@@ -1820,6 +1832,8 @@ def _run_sequential_call(
 def _publish_sequential_result(agent, messages: list, ref: _ToolCallRef, managed: _ManagedToolResult, *, tool_duration: float, index: int, budget: BudgetConfig, transform_applied: bool) -> bool:
     """Terminal hook → observe → commit → completion callbacks/print for one sequential
     result; False when the incremental flush failed (the caller must stop the batch)."""
+    if managed.dispatch_ref is not None:
+        ref = managed.dispatch_ref
     ref.args, ref.trace, function_result = managed.args, managed.middleware_trace, managed.result
     _execution_timed_out = isinstance(function_result, (_ToolTimeoutResult, _ToolCancelledResult))
     # Inline-dispatched runtime tools never reach handle_function_call, so the

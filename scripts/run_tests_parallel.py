@@ -919,13 +919,15 @@ def _print_inline_failure(
     print(flush=True)
 
 
-def _load_durations(repo_root: Path) -> dict[str, float]:
+def _load_durations(repo_root: Path, *, disabled: bool = False) -> dict[str, float]:
     """Read the duration cache from the repo root.
 
     Returns a dict mapping relative file paths (e.g.
     ``tests/tools/test_code_execution.py``) to wall-clock seconds from
     the last run. Missing or corrupt file → empty dict (safe fallback).
     """
+    if disabled:
+        return {}
     path = repo_root / _DURATIONS_FILE
     if not path.is_file():
         return {}
@@ -954,6 +956,19 @@ def _save_durations(
     path = repo_root / _DURATIONS_FILE
     path.write_text(json.dumps(data, indent=2, sort_keys=True) + "\n", encoding="utf-8")
 
+
+def _add_duration_cache_option(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument(
+        "--no-duration-cache", action="store_true",
+        help="Do not read or update repository duration history for this isolated run.",
+    )
+
+
+def _cache_clean_durations(file_times, repo_root: Path, *, disabled: bool = False) -> None:
+    """Keep the existing cache defaults while allowing an isolated run to opt out."""
+    if file_times and not disabled:
+        _save_durations(file_times, repo_root)
+        print(f"  Durations cached to {_DURATIONS_FILE} ({len(file_times)} files)")
 
 def _compute_lpt_slices(
     files: list[Path],
@@ -1270,6 +1285,7 @@ def main() -> int:
         action="store_true",
         help="Don't skip integration/ e2e/ during discovery",
     )
+    _add_duration_cache_option(parser)
     parser.add_argument(
         "--file-timeout",
         type=float,
@@ -1378,7 +1394,8 @@ def main() -> int:
     # (``-k=expr``, ``--tb=long``) are self-contained and need no lookahead.
     OUR_FLAGS = {
         "-h", "--help", "-j", "--jobs", "--paths", "--include-integration",
-        "--file-timeout", "--file-retries", "--slice", "--generate-slices", "--files",
+        "--file-timeout", "--file-retries", "--no-duration-cache", "--slice",
+        "--generate-slices", "--files",
         "--files-from", "--fail-on-skip",
     }
     # pytest short flags that consume the NEXT token as their value.
@@ -1507,7 +1524,7 @@ def main() -> int:
 
     # --generate-slices: compute LPT distribution and emit JSON, then exit.
     if args.generate_slices is not None:
-        durations = _load_durations(repo_root)
+        durations = _load_durations(repo_root, disabled=args.no_duration_cache)
         slices = _compute_lpt_slices(
             files, args.generate_slices, durations, repo_root
         )
@@ -1530,7 +1547,7 @@ def main() -> int:
 
     # Apply slicing if requested (partition from the checkout alone; see _slice_files).
     if slice_index is not None:
-        durations = _load_durations(repo_root)
+        durations = _load_durations(repo_root, disabled=args.no_duration_cache)
         files = _slice_files(files, slice_index, slice_count, durations, repo_root)
         # Recount after slicing.
         test_counts = {f: test_counts[f] for f in files if f in test_counts}
@@ -1635,7 +1652,7 @@ def main() -> int:
         # Duration cache for the timeout scaler: known-slow files get
         # proportional headroom instead of a false timeout-kill under
         # CI load (see _effective_file_timeout).
-        timeout_durations = _load_durations(repo_root)
+        timeout_durations = _load_durations(repo_root, disabled=args.no_duration_cache)
         futures: list[Future] = []
         for file in files:
             t0 = time.monotonic()
@@ -1710,9 +1727,7 @@ def main() -> int:
     clean_times = _clean_pass_durations(
         file_times, failures, _FLAKY_RESULTS,
     )
-    if clean_times:
-        _save_durations(clean_times, repo_root)
-        print(f"  Durations cached to {_DURATIONS_FILE} ({len(clean_times)} files)")
+    _cache_clean_durations(clean_times, repo_root, disabled=args.no_duration_cache)
 
     # Per-file time distribution (throwaway diagnostic — shows how
     # subprocess time is distributed so we can see if startup dominates).
