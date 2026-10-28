@@ -112,6 +112,19 @@ class ForegroundDispatchTests(unittest.TestCase):
             self.invoke(canonical)
         self.assertEqual(caught.exception.code, 75)
 
+    def test_bootstrap_declaration_cannot_admit_gateway_lifecycle(self):
+        contract = Mock()
+        contract.refuse.side_effect = SystemExit(78)
+        bootstrap = types.ModuleType("hermes_retained_bootstrap")
+        bootstrap.current = Mock(return_value=contract)
+        callback = Mock()
+        with patch.dict(sys.modules, {"hermes_retained_bootstrap": bootstrap}):
+            with self.assertRaises(SystemExit) as caught:
+                self.invoke(callback)
+        self.assertEqual(caught.exception.code, 78)
+        contract.refuse.assert_called_once_with("managed-gateway-lifecycle-not-implemented")
+        callback.assert_not_called()
+
     def test_unmarked_home_refuses_before_gateway_dispatch(self):
         (self.home / subject.MARKER).unlink()
         callback = Mock()

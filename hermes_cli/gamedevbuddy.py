@@ -126,6 +126,14 @@ def prepare_runtime(home: Path, *, port: int = 9120) -> dict:
             "profilesAdded": added, "accountRequired": False, "gatewayStarted": False}
 
 
+def _require_gateway_runtime_policy() -> None:
+    """A bootstrap-only declaration must not start an unimplemented lifetime."""
+    policy_api = sys.modules.get("hermes_retained_bootstrap")
+    contract = policy_api.current() if policy_api is not None else None
+    if contract is not None:
+        contract.refuse("managed-gateway-lifecycle-not-implemented")
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(prog="gamedevbuddy-ai")
     parser.add_argument("action", choices=["prepare", "start", "status", "stop", "foreground"])
@@ -149,6 +157,7 @@ def main() -> int:
         os.environ["HERMES_HOME"] = str(home)
         os.environ.pop("HERMES_PROFILE", None)
     if args.action == "foreground":
+        _require_gateway_runtime_policy()
         # Direct dispatch to the SAME full canonical gateway, not `ensure` or
         # a second agent loop. An explicitly marked owned home is required above;
         # this action never prepares or adopts a new home implicitly.
