@@ -1,8 +1,8 @@
 """GameDevBuddy's private, full-feature agent runtime composition.
 
-The product host owns sign-in. This module only prepares an explicitly named
-GameDevBuddy home and delegates gateway ownership to the canonical supervisor.
-It never imports personal logins, changes shell aliases, or edits an engine.
+The product host owns sign-in and process policy. This facade composes an
+explicitly named GameDevBuddy home and dispatches the full canonical gateway.
+Direct dispatch does not supply an externally retained ownership policy.
 """
 from __future__ import annotations
 
@@ -36,15 +36,19 @@ PACKS = {
 
 
 def runtime_environment() -> dict[str, str]:
-    """Do not let the engine discover the launching desktop's provider secrets.
+    """Remove inherited credential-shaped values before private-home secrets load.
+
+    These suffixes follow canonical credential/config routing, including gateway
+    keys, bot tokens and webhook secrets. This finite name filter supplements
+    the host's explicit launch environment; it is not general caller isolation.
     Explicit connections load from this runtime's own vault/.env afterwards.
-    No machine environment, registry or user credential file is modified.
     """
     credential_names = {"AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY", "AWS_SESSION_TOKEN",
                         "GOOGLE_APPLICATION_CREDENTIALS", "CLAUDE_CODE_OAUTH_TOKEN",
                         "CODEX_ACCESS_TOKEN", "GDB_BEARER_TOKEN"}
+    credential_suffixes = ("_KEY", "_TOKEN", "_SECRET", "_PASSWORD", "_CREDENTIALS", "_SERVICE_ACCOUNT_JSON")
     return {name: value for name, value in os.environ.items()
-            if name not in credential_names and not name.endswith(("_API_KEY", "_ACCESS_TOKEN"))}
+            if name.upper() not in credential_names and not name.upper().endswith(credential_suffixes)}
 
 
 def prepare_runtime(home: Path, *, port: int = 9120) -> dict:
@@ -154,14 +158,14 @@ def main() -> int:
         environment = runtime_environment()
         os.environ.clear()
         os.environ.update(environment)
-        from gateway.run import main as gateway_main
         previous_argv = sys.argv
         try:
             # The fixed product action/home/port are not gateway CLI options.
             # Gateway configuration still comes from the explicitly bound home.
             sys.argv = [previous_argv[0]]
-            gateway_main()
-            return 0
+            from gateway.run import main as gateway_main
+            result = gateway_main()
+            return 0 if result is None else result
         finally:
             sys.argv = previous_argv
     if args.action == "stop":

@@ -31,11 +31,19 @@ class ForegroundDispatchTests(unittest.TestCase):
             "product": subject.PRODUCT, "home": str(self.home.resolve()),
         }), encoding="utf-8")
 
-    def invoke(self, callback, home_argument=None):
+    def invoke(self, callback, home_argument=None, *, inherited=None, on_import=None):
         gateway = types.ModuleType("gateway")
         gateway.__path__ = []
         run = types.ModuleType("gateway.run")
-        run.main = callback
+        if on_import is None:
+            run.main = callback
+        else:
+            def resolve(name):
+                if name != "main":
+                    raise AttributeError(name)
+                on_import()
+                return callback
+            run.__getattr__ = resolve
         gateway.run = run
         argv = ["stumpy.py", "foreground", "--home", str(home_argument or self.home)]
         with patch.dict(sys.modules, {"gateway": gateway, "gateway.run": run}), \
@@ -43,7 +51,8 @@ class ForegroundDispatchTests(unittest.TestCase):
                                       "USERPROFILE": str(Path(self.directory.name)),
                                       "HERMES_PROFILE": "unrelated-profile",
                                       "OPENAI_API_KEY": "synthetic-fixture-only",
-                                      "GDB_BEARER_TOKEN": "synthetic-host-token"}, clear=True), \
+                                      "GDB_BEARER_TOKEN": "synthetic-host-token",
+                                      **(inherited or {})}, clear=True), \
              patch.object(sys, "argv", argv), \
              patch.object(subject, "prepare_runtime") as prepare, \
              patch.object(subject.subprocess, "Popen") as popen:
@@ -66,6 +75,35 @@ class ForegroundDispatchTests(unittest.TestCase):
         self.assertNotIn("OPENAI_API_KEY", environment)
         self.assertNotIn("GDB_BEARER_TOKEN", environment)
         self.assertEqual(argv, ["stumpy.py"])
+
+    def test_inherited_listener_and_bot_credentials_are_removed(self):
+        credentials = dict.fromkeys([
+            "API_SERVER_KEY", "WEBHOOK_SECRET", "TELEGRAM_BOT_TOKEN",
+            "ANTHROPIC_AUTH_TOKEN", "VOICE_TOOLS_OPENAI_KEY", "SUDO_PASSWORD",
+            "GOOGLE_APPLICATION_CREDENTIALS", "CUSTOM_SERVICE_ACCOUNT_JSON",
+        ], "synthetic-fixture-only")
+        observed = []
+        self.invoke(lambda: observed.append(dict(os.environ)), inherited={
+            **credentials, "HERMES_RUNTIME_DIR": "synthetic-sealed-runtime",
+        })
+        self.assertFalse(credentials.keys() & observed[0].keys())
+        self.assertEqual(observed[0]["HERMES_RUNTIME_DIR"], "synthetic-sealed-runtime")
+        self.assertEqual(observed[0]["HERMES_HOME"], str(self.home.resolve()))
+
+    def test_gateway_import_sees_only_canonical_argv(self):
+        observed = []
+        self.invoke(lambda: None, on_import=lambda: observed.append(list(sys.argv)))
+        self.assertTrue(observed)
+        self.assertTrue(all(argv == ["stumpy.py"] for argv in observed))
+
+    def test_gateway_import_failure_restores_product_argv(self):
+        def fail_import():
+            raise ImportError("synthetic import failure")
+        with self.assertRaisesRegex(ImportError, "synthetic import failure"):
+            self.invoke(lambda: None, on_import=fail_import)
+
+    def test_canonical_returned_error_is_not_relabelled_as_success(self):
+        self.assertEqual(self.invoke(lambda: 78), 78)
 
     def test_canonical_exit_is_not_relabelled_as_success(self):
         def canonical():
