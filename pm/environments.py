@@ -450,6 +450,23 @@ def _require_own_dependencies(project_root: Path) -> None:
         raise NoCommittedEnvironment("no dependency environment is committed for this install")
 
 
+def _retained_bootstrap_policy(project_root: Path):
+    """Read an already selected policy without importing or selecting one."""
+    import sys
+
+    policy_api = sys.modules.get("hermes_retained_bootstrap")
+    return policy_api.current_for(project_root) if policy_api is not None else None
+
+
+def _skip_missing_activation_site(project_root: Path, selected: Path, retained) -> bool:
+    """Keep the legacy empty-environment return out of retained activation."""
+    if selected.is_dir() or runtime_facts_path(project_root).is_file():
+        return False
+    if retained is not None:
+        retained.refuse("prepared-dependency-site-missing")
+    return True
+
+
 def activate_dependencies(project_root: Path) -> None:
     """Select the committed tree at process boot, before third-party imports.
 
@@ -459,17 +476,28 @@ def activate_dependencies(project_root: Path) -> None:
     import sys
 
     state = install_state_dir(project_root)
+    retained = _retained_bootstrap_policy(project_root)
+    if retained is not None:
+        retained.require_activation(state)
     if state.is_dir():
         from hermes_cli.runtime_state import runtime_lock, recover_publication, lease_generation
         # The lock's holder may be another profile's backend running a full dependency rebuild;
         # this process only reads the committed selection, so it proceeds without waiting rather
         # than leaving the backend unbound (see runtime_lock).
         with runtime_lock(project_root) as held:
-            if held:
+            if retained is not None:
+                if not held:
+                    retained.refuse("install-writer-exclusion-not-acquired")
+                retained.require_inputs()
+            elif held:
                 recover_publication(project_root)
             environment = committed_venv(project_root)
             if environment is None:
+                if retained is not None:
+                    retained.refuse("prepared-dependency-selection-missing")
                 return _require_own_dependencies(project_root)
+            if retained is not None:
+                retained.require_selection(state, environment, site_packages(environment))
             release = lease_generation(environment)
             # Without the lock, an installer may commit a new generation between the
             # read and the lease, leaving the leased one unselected and collectable.
@@ -477,19 +505,27 @@ def activate_dependencies(project_root: Path) -> None:
                 release()
                 environment, release = current, lease_generation(current)
             selected = site_packages(environment)
-            if not selected.is_dir() and not runtime_facts_path(project_root).is_file():
+            if _skip_missing_activation_site(project_root, selected, retained):
                 return
     else:
         # Sealed payloads still select once, before imports.
         # Never consult VIRTUAL_ENV: it can describe the invoking shell's Python.
         environment = payload_venv(project_root)
         if environment is None:
+            if retained is not None:
+                retained.refuse("complete-payload-environment-missing")
             return _require_own_dependencies(project_root)
         selected = site_packages(environment)
         if not selected.is_dir():
+            if retained is not None:
+                retained.refuse("payload-site-packages-missing")
             return  # External/Nix interpreter owns its original sys.path.
     if not selected.is_dir():
         raise RuntimeError(f"dependency environment has no site-packages: {selected}")
+    if retained is not None:
+        retained.require_selection(state, environment, selected)
+        if venv_python_version(environment) != sys.version_info[:2]:
+            retained.refuse("prepared-python-abi-mismatch")
     import site
 
     sys.path[:] = [entry for entry in sys.path

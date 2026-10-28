@@ -74,7 +74,7 @@ def default_pycache_dir(environ):
     return os.path.join(base, ".cache", "hermes-pycache") if base else None
 
 
-def configure(here, environ=None):
+def configure(here, environ=None, *, retained=None):
     """Point THIS process (the minted launcher's python) at the payload.
     Returns the sys.path entries prepended, for tests."""
     environ = os.environ if environ is None else environ
@@ -94,11 +94,14 @@ def configure(here, environ=None):
     # concurrent-log-handler silently drops every file-log record (the
     # same trap gateway/run.py's MCP venv bootstrap works around). Keep
     # site-packages directly after the repo, ahead of .pth-added dirs.
-    site.addsitedir(site_entry)
-    if site_entry in sys.path:
-        sys.path.remove(site_entry)
-    sys.path.insert(1 if sys.path and sys.path[0] == repo_entry else 0, site_entry)
-    if not environ.get("PYTHONPYCACHEPREFIX"):
+    if retained is None:
+        site.addsitedir(site_entry)
+        if site_entry in sys.path:
+            sys.path.remove(site_entry)
+        sys.path.insert(1 if sys.path and sys.path[0] == repo_entry else 0, site_entry)
+    # The opt-in uses -B and lets canonical activate_dependencies select/lease
+    # the prepared environment BEFORE any dependency .pth executes.
+    if retained is None and not environ.get("PYTHONPYCACHEPREFIX"):
         # A baked payload reads its own source-adjacent __pycache__ dirs
         # (Python's default lookup). sys.pycache_prefix must stay UNSET here:
         # the prefix relocates reads as well as writes, so it would hide the
@@ -116,10 +119,32 @@ def configure(here, environ=None):
     return [repo_entry, site_entry]
 
 
+def _select_retained_bootstrap(here, argv):
+    if argv[1:2] != ["--gdb-retained-bootstrap"]:
+        return None
+    if HERMES_ENTRY_MODULE != "hermes_cli.gamedevbuddy" or len(argv) < 4:
+        raise SystemExit("retained bootstrap requires the sealed product entry and a plan")
+    if not sys.flags.no_site or not sys.flags.isolated or not sys.dont_write_bytecode:
+        raise SystemExit("retained bootstrap requires interpreter flags -B -I -S")
+    if any(name in sys.modules for name in ("hermes_bootstrap", "hermes_cli", "pm")):
+        raise SystemExit("retained bootstrap must precede Hermes package imports")
+    repo_entry, _site_entry = payload_sys_paths(here)
+    sys.path.insert(0, repo_entry)
+    # Root-level stdlib-only module: no package __init__ can bootstrap ahead of it.
+    policy_api = importlib.import_module("hermes_retained_bootstrap")
+    value = policy_api.install(argv[2], repo_entry, argv[3:])
+    sys.argv = [argv[0], *argv[3:]]
+    return value
+
+
 def main(argv=None):
     argv = list(sys.argv if argv is None else argv)
     here = launcher_dir(argv[0] if argv else sys.argv[0])
-    configure(here)
+    retained = _select_retained_bootstrap(here, argv)
+    if retained is None:
+        configure(here)
+    else:
+        configure(here, retained=retained)
     importlib.import_module("hermes_bootstrap")
     module = importlib.import_module(HERMES_ENTRY_MODULE)
     target = getattr(module, HERMES_ENTRY_FUNC)
