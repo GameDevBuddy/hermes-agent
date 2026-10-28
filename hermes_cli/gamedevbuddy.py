@@ -124,10 +124,14 @@ def prepare_runtime(home: Path, *, port: int = 9120) -> dict:
 
 def main() -> int:
     parser = argparse.ArgumentParser(prog="gamedevbuddy-ai")
-    parser.add_argument("action", choices=["prepare", "start", "status", "stop"])
+    parser.add_argument("action", choices=["prepare", "start", "status", "stop", "foreground"])
     parser.add_argument("--home", type=Path, required=True)
     parser.add_argument("--port", type=int, default=9120)
     args = parser.parse_args()
+    if args.action == "foreground" and (
+        not args.home.is_absolute() or args.home.resolve() == (Path.home() / ".hermes").resolve()
+    ):
+        raise ValueError("Use an absolute, separate GameDevBuddy runtime home")
     if args.action in {"prepare", "start"}:
         receipt = prepare_runtime(args.home, port=args.port)
         if args.action == "prepare":
@@ -140,6 +144,26 @@ def main() -> int:
             raise ValueError("Not a GameDevBuddy runtime home")
         os.environ["HERMES_HOME"] = str(home)
         os.environ.pop("HERMES_PROFILE", None)
+    if args.action == "foreground":
+        # Direct dispatch to the SAME full canonical gateway, not `ensure` or
+        # a second agent loop. An explicitly marked owned home is required above;
+        # this action never prepares or adopts a new home implicitly.
+        # Canonical bootstrap/lifecycle behavior is unchanged: this is NOT an
+        # externally retained/cooperative-only policy or a readiness receipt.
+        # The app must not admit this entry until those separate gates close.
+        environment = runtime_environment()
+        os.environ.clear()
+        os.environ.update(environment)
+        from gateway.run import main as gateway_main
+        previous_argv = sys.argv
+        try:
+            # The fixed product action/home/port are not gateway CLI options.
+            # Gateway configuration still comes from the explicitly bound home.
+            sys.argv = [previous_argv[0]]
+            gateway_main()
+            return 0
+        finally:
+            sys.argv = previous_argv
     if args.action == "stop":
         # The generic Windows CLI can escalate a wedged stop to taskkill.
         # The product host's close is cooperative only; a timeout is a blocker.
