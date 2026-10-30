@@ -397,6 +397,8 @@ def resolve_cron_scheduler() -> CronScheduler:
     if not name or name in ("builtin", "in-process", "inprocess"):
         return InProcessCronScheduler()
 
+    from cron.scheduler_owned import unsupported
+    unsupported("external-scheduler-provider", name)
     try:
         from plugins.cron_providers import load_cron_scheduler
         provider = load_cron_scheduler(name)
