@@ -1,8 +1,9 @@
-"""Explicit sealed-host bootstrap declaration; no process or authentication authority.
+"""Explicit pinned-input bootstrap contracts; no process or authentication authority.
 
 Only stdlib is imported. This module is loaded directly from the sealed source
 root before site hooks and before any Hermes package. Checks are point-in-time
-checks under the caller's required writer exclusion, not atomic path proofs.
+input/selection observations, not atomic path proofs. Schema two declares no
+writer exclusion, continuous isolation, launch or native/runtime permission.
 """
 from __future__ import annotations
 
@@ -20,6 +21,10 @@ _BOUND = None
 _PLAN_BYTES = None
 _DEPENDENCY_INPUTS = ("pm/lock.json", "pyproject.toml", "uv.lock")
 _MAX_PLAN_BYTES = 128 * 1024
+_OBSERVATION_POLICY = "pinned-input-observations-v1"
+_COMMON_PLAN_FIELDS = frozenset({"schemaVersion", "policy", "root", "home", "environment", "site",
+                                 "selection", "factsSha256", "packageManifestSha256", "sourceRevision",
+                                 "dependencyPins", "attemptId"})
 
 
 class BootstrapRefused(SystemExit):
@@ -86,6 +91,7 @@ class RetainedBootstrap:
     source_revision: str
     dependency_pins: tuple[tuple[str, str], ...]
     attempt_id: str
+    input_policy: str | None = None
 
     @property
     def state(self):
@@ -255,6 +261,22 @@ def _read_plan(plan_path):
     return raw_plan, data
 
 
+def _contract_input_policy(data):
+    schema = data.get("schemaVersion")
+    if type(schema) is not int or schema not in (1, 2):
+        _refuse("unsupported-bootstrap-contract")
+    field = "writerExclusion" if schema == 1 else "inputPolicy"
+    if set(data) != _COMMON_PLAN_FIELDS | {field}:
+        _refuse("unsupported-bootstrap-contract")
+    if schema == 1:
+        if data["policy"] != "retained-bootstrap" or data["writerExclusion"] is not True:
+            _refuse("required-caller-writer-declaration-missing")
+        return None
+    if data["policy"] != "retained-bootstrap" or data["inputPolicy"] != _OBSERVATION_POLICY:
+        _refuse("required-pinned-input-observations-policy-missing")
+    return _OBSERVATION_POLICY
+
+
 def install(plan_path, root, public_args):
     global _BOUND, _PLAN_BYTES
     if _BOUND is not None:
@@ -264,14 +286,7 @@ def install(plan_path, root, public_args):
             or "hermes_cli" in sys.modules or "pm" in sys.modules):
         _refuse("contract-was-not-selected-at-clean-sealed-entry")
     raw_plan, data = _read_plan(plan_path)
-    required = {"schemaVersion", "policy", "root", "home", "environment", "site",
-                "selection", "factsSha256", "packageManifestSha256",
-                "sourceRevision", "dependencyPins", "attemptId", "writerExclusion"}
-    if (set(data) != required or type(data["schemaVersion"]) is not int
-            or data["schemaVersion"] != 1):
-        _refuse("unsupported-bootstrap-contract")
-    if data["policy"] != "retained-bootstrap" or data["writerExclusion"] is not True:
-        _refuse("required-caller-writer-declaration-missing")
+    input_policy = _contract_input_policy(data)
     if data["selection"] not in ("payload", "generation"):
         _refuse("unknown-prepared-selection")
     if (not isinstance(data["attemptId"], str) or not 1 <= len(data["attemptId"]) <= 128
@@ -296,7 +311,7 @@ def install(plan_path, root, public_args):
         _absolute(data["root"]), _absolute(data["home"]),
         _absolute(data["environment"]), _absolute(data["site"]), data["selection"],
         data["factsSha256"], data["packageManifestSha256"], data["sourceRevision"],
-        tuple(sorted(pins.items())), data["attemptId"])
+        tuple(sorted(pins.items())), data["attemptId"], input_policy)
     if value.root != Path(root).resolve() or _absolute(args.home) != value.home:
         _refuse("launcher-and-home-contract-mismatch")
     if value.home == (Path.home() / ".hermes").resolve():
