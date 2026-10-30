@@ -63,6 +63,7 @@ class ContextStage:
             refuse("native_original_app_context_factory_missing")
         self.source, self.original, self.selection, self.params = source, original, selection, params
         self.nonce = params["nonce"]
+        self.contract = source.contract
         self.job, self.task, self.loop = source.job, source.task, source.loop
         self.stdin_owner, self.stdin = source.stdin_owner, source.stdin
         self.stdout_owner, self.actor, self.transport = source.stdout_owner, original.actor, original.transport
@@ -75,7 +76,7 @@ class ContextStage:
         if (not same_originals((source, original), (s, self.original))
                 or not same_originals((s.job, s.task, s.loop, s.stdin_owner, s.stdin, s.stdout_owner),
                                      (self.job, self.task, self.loop, self.stdin_owner, self.stdin, self.stdout_owner))
-                or c.actor is not self.actor or c.transport is not self.transport
+                or s.contract is not self.contract or c.actor is not self.actor or c.transport is not self.transport
                 or self.error is not None or s._app_context_error is not None
                 or not selected.current() or s._app_context_stages.get(self.nonce) is not self
                 or s._app_context_slots.get((id(c), selected.ref.session_id)) != self.nonce
@@ -109,7 +110,8 @@ class ContextRequest:
     def require_current(self):
         self.reader.require_retained()
         s, frame, stage = self.source, self.frame, self.stage
-        if (stage is None or stage.request is not self or self.error is not None
+        if (stage is None or s is not stage.source or self.reader.source is not stage.source
+                or stage.request is not self or self.error is not None
                 or self.reader.active is not self
                 or s._app_context_requests.get(frame["requestId"]) is not self
                 or stage.nonce != frame["nonce"] or stage.selection.context != frame["contextId"]
