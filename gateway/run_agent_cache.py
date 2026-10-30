@@ -949,6 +949,8 @@ class GatewayAgentCacheMixin:
         resume, so terminal sandbox, browser daemon and bg processes outlive the AIAgent instance."""
         if agent is None:
             return
+        from agent.primary_owned import retain_cached_agent
+        retain_cached_agent(agent)
         with suppress(Exception):
             if hasattr(agent, "release_clients"):
                 agent.release_clients()

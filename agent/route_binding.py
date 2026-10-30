@@ -11,10 +11,12 @@ import logging
 from typing import Any, Dict, Optional, Tuple
 
 from utils import base_url_host_matches
+from agent.primary_owned import agent_factory as _primary_factory
 
 logger = logging.getLogger(__name__)
 
 
+@_primary_factory(mutating=True)
 def bind_route_entry(agent: Any, entry: dict[str, Any], provider: str, model: str) -> Optional[tuple[str, str]]:
     """Swap ``agent`` onto ``entry`` (a fallback-chain-shaped dict). Returns ``(old_model,
     old_provider)``, or None when the provider has no usable client. Sets ``_fallback_activated``
@@ -93,6 +95,7 @@ def bind_route_entry(agent: Any, entry: dict[str, Any], provider: str, model: st
     return old_model, old_provider
 
 
+@_primary_factory(mutating=True)
 def reinstall_runtime_snapshot(agent: Any, rt: dict[str, Any]) -> None:
     """Put ``agent`` on the runtime recorded in ``rt`` (a ``_primary_runtime``-shaped snapshot):
     identity, client, caching flags, compressor, reasoning and prompt identity. Credential pool

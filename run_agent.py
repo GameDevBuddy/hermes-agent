@@ -122,6 +122,7 @@ from agent.turn_facade import TurnFacadeMixin
 from agent.vision_message_prep import VisionMessagePrepMixin
 from agent.reasoning_params import ReasoningParamsMixin
 from agent.lazy_forward import forward as _forward, forward_static as _forward_static
+from agent import primary_owned as _primary_owned
 from agent.session_activity import ActivityProvenance
 from agent.model_metadata import is_local_endpoint
 from agent.message_sanitization import (
@@ -233,6 +234,7 @@ class AIAgent(
         self._base_url_lower = value.lower() if value else ""
         self._base_url_hostname = base_url_hostname(value)
 
+    @_primary_owned.initializing
     def __init__(
         self,
         base_url: str | None = None, api_key: str | None = None, provider: str | None = None, api_mode: str | None = None,
@@ -1005,6 +1007,8 @@ class AIAgent(
         close() so a concurrent reader can't grab a half-closed session."""
         codex_session = getattr(self, "_codex_session", None)
         if codex_session is not None:
+            if _primary_owned.defer_release(self, codex_session):
+                return
             self._codex_session = None
             codex_session.close()
 

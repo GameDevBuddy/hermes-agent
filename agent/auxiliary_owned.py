@@ -18,6 +18,7 @@ _client_records = {}
 _source_claims = []
 _claim_count = 0
 _construction = contextvars.ContextVar("_original_auxiliary_construction", default=None)
+_primary_scope = contextvars.ContextVar("_original_primary_agent_construction", default=None)
 
 
 def managed_active():
@@ -53,6 +54,8 @@ class AuxiliaryConstruction:
     def __init__(self, source, kind, factory):
         from hermes_constants import get_hermes_home, hermes_home_key
         self.source, self.kind, self.factory = source, kind, factory
+        self.primary_owner, self.primary_agent = _primary_scope.get(), None
+        self.primary_close_links = None
         self.runner, self.runtime = source.runner, getattr(source.runner, "_gdb_original_source_runtime", None)
         self.creator_loop, self.creator_thread = running_loop(), threading.current_thread()
         self.owner_loop = self.creator_loop or source.loop
@@ -88,6 +91,8 @@ class AuxiliaryConstruction:
                 self.source.require_child_work()
             if self.error is not None:
                 raise OwnedGatewayUnknown("original-auxiliary-first-failure-retained")
+            from agent.primary_owned import require_record_association
+            require_record_association(self)
         except BaseException as error:
             fail(self, error)
             raise
@@ -120,6 +125,8 @@ def reserve(kind, factory):
             source.unknown("original-auxiliary-record-construction-failed")
             raise
         source.auxiliary_clients[index] = record
+        if record.primary_owner is not None:
+            record.primary_owner.children += (record,)
     return record
 
 

@@ -31,6 +31,11 @@ async def close_authorities(runner):
 
 
 async def close_agent_resources(runner):
+    from agent.auxiliary_owned import managed_active
+    if managed_active():
+        from agent.primary_owned import close_agent_memories
+        await close_agent_memories(runner)
+        return
     from gateway.run import _profile_runtime_scope
     from hermes_constants import get_default_hermes_root
     with runner._agent_cache_lock:

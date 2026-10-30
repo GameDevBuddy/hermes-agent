@@ -10,6 +10,7 @@ from contextlib import suppress
 from typing import Any, Optional
 
 from agent.lazy_forward import forward as _forward, forward_static as _forward_static, lazy_attr as _lazy_attr
+from agent import primary_owned as _primary_owned, auxiliary_owned as _sdk_owned
 from hermes_cli.timeouts import get_provider_request_timeout
 from utils import base_url_host_matches, env_float
 
@@ -186,7 +187,7 @@ class ClientLifecycleMixin:
     def _build_keepalive_http_client(base_url: str = "", *, verify: Any = True) -> Any:
         """Build the shared OpenAI httpx client used by main and aux paths."""
         from agent.process_bootstrap import build_keepalive_http_client
-        return build_keepalive_http_client(base_url, verify=verify)
+        return _sdk_owned.construct_during_auxiliary("http", build_keepalive_http_client, base_url, verify=verify)
 
     _create_openai_client = _forward("agent.agent_runtime_helpers", "create_openai_client")
     _force_close_tcp_sockets = _forward_static("agent.agent_runtime_helpers", "force_close_tcp_sockets")
@@ -196,6 +197,8 @@ class ClientLifecycleMixin:
 
     def _close_openai_client(self, client: Any, *, reason: str, shared: bool) -> None:
         if client is None:
+            return
+        if _primary_owned.defer_release(self, client):
             return
         ctx = self._client_log_context()
         # Force-close TCP sockets first (no CLOSE-WAIT accumulation), then the graceful SDK close.
@@ -220,6 +223,8 @@ class ClientLifecycleMixin:
         #29507/#70773.
         """
         if client is None:
+            return
+        if _primary_owned.defer_release(self, client):
             return
         try:
             shutdown_count = self._force_close_tcp_sockets(client)
@@ -313,6 +318,7 @@ class ClientLifecycleMixin:
         with self._openai_client_lock():
             client = getattr(self, "client", None)
             if client is not None and not self._is_openai_client_closed(client):
+                _primary_owned.retain(self, client, consume=True)
                 return client
             try:
                 new_client = self._create_openai_client(self._client_kwargs, reason=reason, shared=True)
@@ -370,6 +376,7 @@ class ClientLifecycleMixin:
             if cached is None or cache["in_use"]:
                 return None, None
             if not cache["poisoned"] and cache["key"] == key and not self._is_openai_client_closed(cached):
+                _primary_owned.retain(self, cached, consume=True)
                 cache["in_use"] = True
                 return cached, None
             # Key changed / poisoned / externally closed — rebuild. in_use was False, so closing the stale
@@ -378,6 +385,7 @@ class ClientLifecycleMixin:
             return None, cached
 
     def _store_request_slot(self, slot_attr: str, client: Any, key: Any) -> None:
+        _primary_owned.retain(self, client, consume=True)
         with self._openai_client_lock():
             cache = self._request_slot(slot_attr)
             if cache["client"] is None:
@@ -419,6 +427,8 @@ class ClientLifecycleMixin:
             cache = self._request_slot(slot_attr)
             if cache["client"] is client:
                 cache["poisoned"] = True
+        if _primary_owned.defer_release(self, client):
+            return
         try:
             # Non-HTTP providers cancel without closing owner-thread file descriptors.
             if callable(getattr(type(client), "cancel", None)):
@@ -495,6 +505,7 @@ class ClientLifecycleMixin:
             get_provider_request_timeout(self.provider, self.model), bool(getattr(self, "_oauth_1m_beta_disabled", False)),
         )
 
+    @_primary_owned.agent_factory
     def _build_direct_anthropic_client(self, token: str, base_url: Any) -> Any:
         """Native Anthropic client for ``token``/``base_url`` with the provider/model request timeout."""
         from agent.anthropic_adapter import build_anthropic_client
@@ -505,6 +516,7 @@ class ClientLifecycleMixin:
         from agent.anthropic_credentials import anthropic_route_is_oauth
         return anthropic_route_is_oauth(getattr(self, "_anthropic_base_url", None), token, provider=self.provider)
 
+    @_primary_owned.agent_factory
     def _build_anthropic_client_for_key(self, key: tuple) -> Any:
         from agent.anthropic_adapter import build_anthropic_bedrock_client, build_anthropic_client
         if key[0] == "bedrock":
@@ -534,6 +546,8 @@ class ClientLifecycleMixin:
         """Owner-thread close: clean finish keeps the pool warm; otherwise force-close sockets (CLOSE-WAIT) + SDK close."""
         if client is None or self._release_request_slot(_ANTHROPIC_SLOT, client, reason):
             return
+        if _primary_owned.defer_release(self, client):
+            return
         try:
             self._force_close_tcp_sockets(client)
             client.close()
@@ -547,6 +561,8 @@ class ClientLifecycleMixin:
         """Teardown hook: really close the cached per-request Anthropic client."""
         client, in_use = self._take_request_slot(_ANTHROPIC_SLOT)
         if client is None:
+            return
+        if _primary_owned.defer_release(self, client):
             return
         if in_use:  # checked out by a worker — same reasoning as the OpenAI teardown hook
             self._abort_request_anthropic_client(client, reason=f"{reason}_in_flight")
@@ -855,7 +871,7 @@ class ClientLifecycleMixin:
         if not new_token or new_token == self._anthropic_api_key:
             return False
         with suppress(Exception):
-            self._anthropic_client.close()
+            _primary_owned.legacy_close(self, self._anthropic_client)
         try:
             base_url = getattr(self, "_anthropic_base_url", None)
             self._anthropic_client = self._build_direct_anthropic_client(new_token, base_url)
@@ -951,7 +967,7 @@ class ClientLifecycleMixin:
         route_changed = normalize_route_base_url(self.base_url) != normalize_route_base_url(runtime_base)
         if self.api_mode == "anthropic_messages":
             with suppress(Exception):
-                self._anthropic_client.close()
+                _primary_owned.legacy_close(self, self._anthropic_client)
             self._anthropic_api_key, self._anthropic_base_url = runtime_key, stripped_base
             self._anthropic_client = self._build_direct_anthropic_client(runtime_key, self._anthropic_base_url)
             self._is_anthropic_oauth = self._anthropic_oauth_flag(runtime_key)

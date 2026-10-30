@@ -476,6 +476,9 @@ def make_codex_app_server_event_bridge(agent) -> Callable[[dict], None]:
 
 def _close_codex_session(agent) -> None:
     """Drop the session so the next turn respawns codex instead of reusing a dead client."""
+    from agent.primary_owned import defer_release
+    if defer_release(agent, getattr(agent, "_codex_session", None)):
+        return
     with suppress(Exception):
         agent._codex_session.close()
     agent._codex_session = None
@@ -652,7 +655,8 @@ def _ensure_codex_session(agent, messages: list[dict[str, Any]] | None = None) -
     history_seed = render_history_seed(messages) or None
     # The model always rides along: codex's home is shared, while the Hermes model is per profile/session,
     # so omitting it ran codex's own default instead of the selection.
-    agent._codex_session = CodexAppServerSession(
+    from agent.primary_owned import construct_client
+    agent._codex_session = construct_client(agent, "provider", CodexAppServerSession,
         cwd=getattr(agent, "session_cwd", None) or str(resolve_agent_cwd()), approval_callback=approval_callback,
         codex_bin=get_configured_codex_binary(load_config()),
         request_routing=_ServerRequestRouting(auto_approve_exec=auto_approve_requests, auto_approve_apply_patch=auto_approve_requests),

@@ -32,7 +32,7 @@ def _claim_original_children(record):
         child.close_dispatch = record.close_dispatch
 
 
-def _require_original_close_owner(record):
+def _require_original_close_owner(record, primary_snapshot=None):
     from hermes_constants import hermes_home_key
     record.require_current()
     if (asyncio.get_running_loop() is not record.owner_loop or hermes_home_key() != record.home_key
@@ -48,6 +48,8 @@ def _require_original_close_owner(record):
         raise OwnedGatewayUnknown("original-auxiliary-close-entry-changed-or-already-closed")
     for child in record.children:
         child.require_current()
+    from agent.primary_owned import require_close_links
+    require_close_links(record, primary_snapshot)
 
 
 async def _normal_on_owner(record):
@@ -55,13 +57,15 @@ async def _normal_on_owner(record):
         _require_original_close_owner(record)
         if _closed(record.client):
             raise OwnedGatewayUnknown("original-auxiliary-close-entry-changed-or-already-closed")
+        from agent.primary_owned import capture_close_links
+        primary_snapshot = capture_close_links(record)
         _claim_original_children(record)
         record.close_result = record.close_method()
         if inspect.isawaitable(record.close_result):
             await record.close_result
         # Work may yield on its original owner loop. A prior observation cannot
         # settle a replaced runtime, child/client link, method or Job relation.
-        _require_original_close_owner(record)
+        _require_original_close_owner(record, primary_snapshot)
         if not _closed(record.client) or (record.inner is not None and not _closed(record.inner)):
             raise OwnedGatewayUnknown("original-auxiliary-normal-close-unconfirmed")
         if record.shared_refs:
