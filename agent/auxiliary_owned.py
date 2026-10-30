@@ -55,6 +55,7 @@ class AuxiliaryConstruction:
         from hermes_constants import get_hermes_home, hermes_home_key
         self.source, self.kind, self.factory = source, kind, factory
         self.primary_owner, self.primary_agent = _primary_scope.get(), None
+        self.voice_owner = None
         self.normal_parent = None
         self.primary_close_links = None
         self.runner, self.runtime = source.runner, getattr(source.runner, "_gdb_original_source_runtime", None)
