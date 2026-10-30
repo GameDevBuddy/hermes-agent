@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
 import struct
 import sys
 import threading
@@ -236,6 +237,7 @@ def run_foreground(source):
         return source.entry.run()
     except BaseException as error:
         source.unknown(str(error))
+        logging.getLogger(__name__).exception("Original managed foreground is held")
         source.hold_unknown()
 
 
