@@ -43,7 +43,10 @@ async def close_agent_resources(runner):
         with _profile_runtime_scope(home):
             manager = agent._memory_manager
             if manager is not None:
-                await asyncio.to_thread(manager.shutdown_owned)
+                if getattr(manager, "_owned_shutdown_completed", False):
+                    await asyncio.to_thread(manager.require_owned_settled)
+                else:
+                    await asyncio.to_thread(manager.shutdown_owned)
             client = agent.client
             if client is not None:
                 import httpx
