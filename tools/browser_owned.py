@@ -88,26 +88,31 @@ def reserve(kind, factory, parent=None):
     if source is None:
         return None
     with source._state_lock, _lock:
-        book = _books.setdefault(source, source.browser_records)
+        book = _books.get(source, source.browser_records)
         if book is not source.browser_records or source.browser_closed or len(book) >= MAX_RECORDS:
             raise source.unknown("original-browser-before-work-book-or-capacity")
         if source.browser_closing and _normal.get() is None:
             raise source.unknown("original-browser-work-after-shutdown-admission")
         if not source.browser_closing:
             source.require_child_work()
-        record = Record.__new__(Record)
-        book.append(record)
-        _records.append(record)
-        source.browser_credit += CREDIT
         try:
+            # Charge nominal bookkeeping before allocation/publication; this is
+            # neither allocator/RSS reservation nor native lifecycle authority.
+            source.browser_credit += CREDIT
+            if _books.setdefault(source, book) is not book:
+                raise source.unknown("original-browser-resource-book-publication-changed")
+            record = Record.__new__(Record)
+            book.append(record)
+            _records.append(record)
             record.__init__(source, kind, factory, parent)
             record.require()
+            if parent is not None:
+                parent.children += (record,)
         except BaseException as error:
-            source.browser_error = source.browser_error or error
+            if source.browser_error is None:
+                source.browser_error = error
             source.unknown("original-browser-partial-claim-retained")
             raise
-        if parent is not None:
-            parent.children += (record,)
         return record
 
 
