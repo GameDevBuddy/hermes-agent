@@ -20,7 +20,8 @@ def is_native_tool_name(name):
 
 
 def frozen_json(value, limit=MAX_TEXT_BYTES):
-    if json_digest(value) is None:
+    digest = json_digest(value)
+    if digest is None or digest["bytes"] > limit:
         raise RuntimeStoreError("native_source_json_unavailable")
     raw = json.dumps(value, sort_keys=True, ensure_ascii=False,
                      separators=(",", ":"), allow_nan=False).encode("utf-8")
