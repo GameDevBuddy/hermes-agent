@@ -88,14 +88,14 @@ def test_foreign_sdk_loop_is_not_neutered_or_closed(monkeypatch, remaining_modul
     cache = {"original": (client, "fixture", object())}
     monkeypatch.setitem(sys.modules, "agent.auxiliary_client", SimpleNamespace(
         _client_cache_lock=threading.Lock(), _client_cache=cache))
-    with pytest.raises(OwnedGatewayUnknown, match="foreign-sdk-client-loop"):
+    with pytest.raises(OwnedGatewayUnknown, match="original-auxiliary-source-required"):
         asyncio.run(resources.close_remaining_python_resources(object(), None))
     assert calls == []
     assert cache["original"][0] is client
     assert client.is_closed is False
 
 
-def test_owned_async_sdk_close_is_awaited_and_reference_retained(monkeypatch, remaining_modules):
+def test_cache_loop_does_not_mint_async_close_ownership(monkeypatch, remaining_modules):
     calls = []
 
     class Client:
@@ -111,12 +111,13 @@ def test_owned_async_sdk_close_is_awaited_and_reference_retained(monkeypatch, re
         cache = {"original": (client, "fixture", asyncio.get_running_loop())}
         monkeypatch.setitem(sys.modules, "agent.auxiliary_client", SimpleNamespace(
             _client_cache_lock=threading.Lock(), _client_cache=cache))
-        await resources.close_remaining_python_resources(object(), None)
-        assert client.is_closed
+        with pytest.raises(OwnedGatewayUnknown, match="original-auxiliary-source-required"):
+            await resources.close_remaining_python_resources(object(), None)
+        assert not client.is_closed
         assert cache["original"][0] is client
 
     asyncio.run(scenario())
-    assert calls == ["closed"]
+    assert calls == []
 
 
 def test_sdk_close_return_without_closed_state_is_not_accepted(monkeypatch, remaining_modules):
@@ -125,9 +126,9 @@ def test_sdk_close_return_without_closed_state_is_not_accepted(monkeypatch, rema
     cache = {"original": (client, "fixture", None)}
     monkeypatch.setitem(sys.modules, "agent.auxiliary_client", SimpleNamespace(
         _client_cache_lock=threading.Lock(), _client_cache=cache))
-    with pytest.raises(OwnedGatewayUnknown, match="auxiliary-client-did-not-close"):
+    with pytest.raises(OwnedGatewayUnknown, match="original-auxiliary-source-required"):
         asyncio.run(resources.close_remaining_python_resources(object(), None))
-    assert calls == ["close"]
+    assert calls == []
     assert cache["original"][0] is client
 
 

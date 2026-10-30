@@ -116,22 +116,8 @@ async def close_remaining_python_resources(runner, keepalive):
             raise OwnedGatewayUnknown("auth-keepalive-writer-still-running")
     auxiliary = sys.modules.get("agent.auxiliary_client")
     if auxiliary is not None:
-        with auxiliary._client_cache_lock:
-            entries = list(auxiliary._client_cache.values())
-        for client, _model, owner_loop in entries:
-            if client is None:
-                continue
-            if owner_loop is not None and owner_loop is not asyncio.get_running_loop():
-                # The legacy helper neuters transports on foreign/closed loops.
-                # No data-only loop snapshot may authorize that here.
-                raise OwnedGatewayUnknown("foreign-sdk-client-loop-normal-close-unproven")
-            result = client.close()
-            if inspect.isawaitable(result):
-                await result
-            closed = client.is_closed
-            closed = closed() if callable(closed) else closed
-            if closed is not True:
-                raise OwnedGatewayUnknown("auxiliary-client-did-not-close")
+        from agent.auxiliary_owned_close import shutdown_owned
+        await shutdown_owned(runner)
     with hermes_logging._queue_state_lock:
         listener = hermes_logging._queue_listener
     if listener is not None:
