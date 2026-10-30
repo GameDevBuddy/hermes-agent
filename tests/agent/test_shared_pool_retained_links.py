@@ -28,19 +28,18 @@ def test_original_parent_and_membership_survive_normal_close_io(monkeypatch, tmp
             changed_pool, original_connection = pool, before[0]
             other = next(item for item in source.auxiliary_clients
                          if item is not None and item.kind == "shared-pool" and item is not pool)
-            if mutation == "pool-parent":
-                original_connection.pool_record = other
-            elif mutation == "normal-parent":
-                original_connection.normal_parent = other
-            elif mutation == "connections":
-                pool.connections = ()
-            elif mutation == "views":
-                pool.views = ()
-            elif mutation == "requests":
-                pool.requests = ()
-            else:
-                original_connection.client._connection.closed = False
-                pool.connections = ()
+            changes = {
+                "pool-parent": lambda: setattr(original_connection, "pool_record", other),
+                "normal-parent": lambda: setattr(original_connection, "normal_parent", other),
+                "connections": lambda: setattr(pool, "connections", ()),
+                "views": lambda: setattr(pool, "views", ()),
+                "requests": lambda: setattr(pool, "requests", ()),
+                "unclosed-omission": lambda: (
+                    setattr(original_connection.client._connection, "closed", False),
+                    setattr(pool, "connections", ()),
+                ),
+            }
+            changes[mutation]()
 
     async def scenario():
         nonlocal source
