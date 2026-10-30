@@ -145,16 +145,13 @@ def native_schema():
     return tuple(statements + _identity_guards() + _worker_guards() + _message_guards())
 
 
-def _normal(sql):
-    return " ".join(sql.lower().split()).replace(" if not exists", "")
-
-
 def require_schema(conn):
     expected = native_schema()
     names = [sql.split()[2] for sql in expected]
     rows = conn.execute("SELECT name,sql FROM sqlite_master WHERE name IN (" + ",".join("?" for _ in names) + ")", names)
-    actual = {row[0]: _normal(row[1]) for row in rows}
-    if actual != dict(zip(names, map(_normal, expected))):
+    # Normalizing SQL can change quoted predicate literals. The generated DDL round-trips exactly.
+    actual = dict(rows)
+    if actual != dict(zip(names, expected)):
         raise RuntimeStoreError("native_sql_schema_changed")
 
 
