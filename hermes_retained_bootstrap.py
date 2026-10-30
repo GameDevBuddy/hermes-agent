@@ -17,6 +17,7 @@ import sys
 
 
 _BOUND = None
+_PLAN_BYTES = None
 _DEPENDENCY_INPUTS = ("pm/lock.json", "pyproject.toml", "uv.lock")
 
 
@@ -218,15 +219,34 @@ def current_for(root):
     return _BOUND
 
 
+def original_plan_bytes(contract):
+    if contract is not _BOUND or _PLAN_BYTES is None:
+        _refuse("original-bootstrap-plan-required")
+    return _PLAN_BYTES
+
+
+def _read_plan(plan_path):
+    try:
+        raw_plan = _absolute(plan_path).read_bytes()
+        if len(raw_plan) > 128 * 1024:
+            _refuse("bootstrap-plan-too-large")
+        data = json.loads(raw_plan.decode("utf-8-sig", "strict"))
+    except (OSError, ValueError):
+        _refuse("cannot-read-required-json")
+    if type(data) is not dict:
+        _refuse("required-json-is-not-an-object")
+    return raw_plan, data
+
+
 def install(plan_path, root, public_args):
-    global _BOUND
+    global _BOUND, _PLAN_BYTES
     if _BOUND is not None:
         _refuse("bootstrap-contract-already-selected")
     if (not sys.flags.no_site or not sys.flags.isolated
             or not sys.dont_write_bytecode or "hermes_bootstrap" in sys.modules
             or "hermes_cli" in sys.modules or "pm" in sys.modules):
         _refuse("contract-was-not-selected-at-clean-sealed-entry")
-    data = _json(_absolute(plan_path))
+    raw_plan, data = _read_plan(plan_path)
     required = {"schemaVersion", "policy", "root", "home", "environment", "site",
                 "selection", "factsSha256", "packageManifestSha256",
                 "sourceRevision", "dependencyPins", "attemptId", "writerExclusion"}
@@ -267,4 +287,5 @@ def install(plan_path, root, public_args):
     value.require_inputs()
     value.require_bootstrap_tmp()
     _BOUND = value
+    _PLAN_BYTES = raw_plan
     return value

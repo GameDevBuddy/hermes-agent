@@ -133,6 +133,15 @@ def _select_retained_bootstrap(here, argv):
     # Root-level stdlib-only module: no package __init__ can bootstrap ahead of it.
     policy_api = importlib.import_module("hermes_retained_bootstrap")
     value = policy_api.install(argv[2], repo_entry, argv[3:])
+    owned_api = importlib.import_module("hermes_owned_gateway")
+    try:
+        source = owned_api.attach(value, policy_api.original_plan_bytes(value))
+        owned_api.require_lifecycle_available(source)
+    except owned_api.OwnedGatewayUnknown:
+        owned_api.current(value).hold_unknown()
+    # Reserve original stdout for bounded ownership observations on this route.
+    # Tool/session payloads retain their existing transports; headless prints stay visible.
+    sys.stdout = sys.stderr
     sys.argv = [argv[0], *argv[3:]]
     return value
 
@@ -146,6 +155,9 @@ def main(argv=None):
     else:
         configure(here, retained=retained)
     importlib.import_module("hermes_bootstrap")
+    if retained is not None:
+        owned_api = importlib.import_module("hermes_owned_gateway")
+        return owned_api.run_foreground(owned_api.current(retained))
     module = importlib.import_module(HERMES_ENTRY_MODULE)
     target = getattr(module, HERMES_ENTRY_FUNC)
     # main() reads sys.argv; hand it the real argv (argv[0] stays the

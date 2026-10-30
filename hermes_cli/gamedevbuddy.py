@@ -126,6 +126,25 @@ def prepare_runtime(home: Path, *, port: int = 9120) -> dict:
             "profilesAdded": added, "accountRequired": False, "gatewayStarted": False}
 
 
+def _prepare_gateway_environment_source(home: Path, *, port: int) -> int:
+    """Prepare once and describe the selected PM environment without launching it."""
+    from hermes_cli.gamedevbuddy_environment import (
+        begin_gateway_description, freeze_gateway_description,
+        emit_gateway_description, fail_gateway_description,
+    )
+
+    observation = None
+    try:
+        observation = begin_gateway_description(Path(__file__).resolve().parents[1], home, port)
+        receipt = prepare_runtime(observation.home, port=observation.port)
+        freeze_gateway_description(observation, receipt)
+        emit_gateway_description(observation, sys.stdout.buffer)
+        return 0
+    except BaseException as error:
+        fail_gateway_description(observation, error)
+        raise
+
+
 def _require_gateway_runtime_policy() -> None:
     """A bootstrap-only declaration must not start an unimplemented lifetime."""
     policy_api = sys.modules.get("hermes_retained_bootstrap")
@@ -136,10 +155,14 @@ def _require_gateway_runtime_policy() -> None:
 
 def main() -> int:
     parser = argparse.ArgumentParser(prog="gamedevbuddy-ai")
-    parser.add_argument("action", choices=["prepare", "start", "status", "stop", "foreground"])
+    parser.add_argument("action", choices=[
+        "prepare", "start", "status", "stop", "foreground", "prepare-for-gateway",
+    ])
     parser.add_argument("--home", type=Path, required=True)
     parser.add_argument("--port", type=int, default=9120)
     args = parser.parse_args()
+    if args.action == "prepare-for-gateway":
+        return _prepare_gateway_environment_source(args.home, port=args.port)
     if args.action == "foreground" and (
         not args.home.is_absolute() or args.home.resolve() == (Path.home() / ".hermes").resolve()
     ):

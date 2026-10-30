@@ -311,17 +311,31 @@ def test_retained_wrapper_selects_policy_before_bootstrap_and_defers_hooks(prepa
     argv = [str(prepared.root.parent / "bin" / "stumpy.py"), "--gdb-retained-bootstrap",
             str(prepared.plan_path), "foreground", "--home", str(prepared.home)]
     fake_sys = SimpleNamespace(argv=argv, flags=prepared.fake_sys.flags,
-                               dont_write_bytecode=True, modules={}, path=list(sys.path))
+                               dont_write_bytecode=True, modules={}, path=list(sys.path),
+                               stdout=sys.stdout, stderr=sys.stderr)
     sites = []
     imports = []
     target = Mock(return_value=0)
+    source = object()
+
+    def attach(contract, raw_plan):
+        assert contract is policy.current()
+        assert raw_plan == prepared.plan_path.read_bytes()
+        return source
+
+    owned = SimpleNamespace(attach=Mock(side_effect=attach), current=lambda contract: source,
+                            run_foreground=target, require_lifecycle_available=Mock(),
+                            OwnedGatewayUnknown=RuntimeError)
 
     def load(name):
         imports.append(name)
         if name == "hermes_retained_bootstrap":
             assert not sites
             return policy
+        if name == "hermes_owned_gateway":
+            return owned
         assert policy.current() is not None
+        owned.attach.assert_called_once()
         assert not sites
         return SimpleNamespace(main=target)
 
@@ -333,6 +347,51 @@ def test_retained_wrapper_selects_policy_before_bootstrap_and_defers_hooks(prepa
     monkeypatch.setattr(wrapper, "HERMES_REPO_REL", "../repo")
     monkeypatch.setattr(wrapper, "HERMES_SITE_REL", "../" + prepared.site.relative_to(prepared.root.parent).as_posix())
     assert wrapper.main(argv) == 0
-    assert imports == ["hermes_retained_bootstrap", "hermes_bootstrap", "hermes_cli.gamedevbuddy"]
+    assert imports == ["hermes_retained_bootstrap", "hermes_owned_gateway", "hermes_bootstrap",
+                       "hermes_owned_gateway"]
     assert fake_sys.argv == [argv[0], *argv[3:]]
-    target.assert_called_once_with()
+    target.assert_called_once_with(source)
+    owned.require_lifecycle_available.assert_called_once_with(source)
+
+
+def test_unavailable_owned_lifecycle_refuses_before_configure_or_bootstrap(prepared, monkeypatch):
+    import hermes_owned_gateway as owned
+    path = Path(__file__).resolve().parents[2] / "scripts/build/launcher_wrapper.py"
+    spec = importlib.util.spec_from_file_location("unavailable_owned_wrapper_case", path)
+    wrapper = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(wrapper)
+    write_json(prepared.plan_path, prepared.plan)
+    argv = [str(prepared.root.parent / "bin/stumpy.py"), "--gdb-retained-bootstrap",
+            str(prepared.plan_path), "foreground", "--home", str(prepared.home)]
+    fake_sys = SimpleNamespace(argv=argv, flags=prepared.fake_sys.flags, dont_write_bytecode=True,
+                               modules={}, path=list(sys.path), stdout=sys.stdout, stderr=sys.stderr)
+
+    class RetainedUnknown(Exception):
+        pass
+
+    source = SimpleNamespace(contract=object(), require_attached=Mock(),
+                             hold_unknown=Mock(side_effect=RetainedUnknown))
+    imports = []
+
+    def load(name):
+        imports.append(name)
+        if name == "hermes_retained_bootstrap":
+            return policy
+        if name == "hermes_owned_gateway":
+            return SimpleNamespace(attach=Mock(return_value=source), current=lambda contract: source,
+                                   require_lifecycle_available=owned.require_lifecycle_available,
+                                   OwnedGatewayUnknown=owned.OwnedGatewayUnknown)
+        raise AssertionError("unavailable lifetime imported bootstrap or gateway")
+
+    configure = Mock(side_effect=AssertionError("unavailable lifetime configured dependencies"))
+    monkeypatch.setattr(wrapper, "sys", fake_sys)
+    monkeypatch.setattr(wrapper, "importlib", SimpleNamespace(import_module=load))
+    monkeypatch.setattr(wrapper, "configure", configure)
+    monkeypatch.setattr(wrapper, "HERMES_ENTRY_MODULE", "hermes_cli.gamedevbuddy")
+    monkeypatch.setattr(wrapper, "HERMES_REPO_REL", "../repo")
+    monkeypatch.setattr(wrapper, "HERMES_SITE_REL", "../" + prepared.site.relative_to(prepared.root.parent).as_posix())
+    with pytest.raises(RetainedUnknown):
+        wrapper.main(argv)
+    assert imports == ["hermes_retained_bootstrap", "hermes_owned_gateway"]
+    configure.assert_not_called()
+    source.hold_unknown.assert_called_once_with()
