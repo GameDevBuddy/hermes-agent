@@ -52,6 +52,7 @@ class OwnedGatewaySource:
         self.stdin = sys.stdin.buffer
         self.stdout_owner, self.stderr_owner = sys.stdout, sys.stderr
         self.job = self.runner = self.task = self.loop = None
+        self.loop_thread = None
         self.phase, self.error = "attaching", None
         self._state_lock = threading.RLock()
         self._attach_attempt = None
@@ -63,6 +64,10 @@ class OwnedGatewaySource:
         self.child_transports = []
         self.stderr_transports = []
         self.unresolved_resource_refs = []
+        self.auxiliary_clients = []
+        self.auxiliary_credit = 0
+        self.auxiliary_error = None
+        self.auxiliary_closing_attempted = self.auxiliary_closed = False
         self.mcp_contexts = {}
         self.entry = None
 
@@ -149,6 +154,7 @@ class OwnedGatewaySource:
         if type(runner) is not GatewayRunner or task is None or self.runner is not None:
             raise self.unknown("canonical-runner-and-original-task-required")
         self.runner, self.task, self.loop = runner, task, loop
+        self.loop_thread = threading.current_thread()
         runner._owned_gateway_source = self
         self.phase = "bound"
 

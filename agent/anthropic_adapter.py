@@ -453,7 +453,8 @@ def _new_sdk_client(sdk, kwargs: dict[str, Any], headers: dict[str, str], route:
     merged.update(_custom_provider_extra_headers(route or kwargs.get("base_url")))
     if merged:
         kwargs["default_headers"] = merged
-    return sdk.Anthropic(**kwargs)
+    from agent.auxiliary_owned import construct_during_auxiliary
+    return construct_during_auxiliary("sdk", sdk.Anthropic, **kwargs)
 
 
 def _custom_provider_extra_headers(base_url) -> dict[str, str]:

@@ -258,6 +258,8 @@ def close_shared_transports() -> int:
     """Really close every process-shared transport (test teardown / atexit)."""
     with _SHARED_TRANSPORTS_LOCK:
         transports = list(_SHARED_TRANSPORTS.values())
+        from agent.auxiliary_owned import guard_shared_transport_close
+        guard_shared_transport_close(transports)
         _SHARED_TRANSPORTS.clear()
     for transport in transports:
         try:
@@ -327,7 +329,9 @@ def build_keepalive_http_client(base_url: str = "", *, async_mode: bool = False,
                 # direct transport (pool + SSL context) per client.
                 return client_cls(limits=limits, timeout=timeout, transport=mounts["https://"], mounts=mounts)
         return client_cls(limits=limits, timeout=timeout, proxy=proxy, mounts=mounts or None, verify=verify)
-    except Exception:
+    except Exception as error:  # health: allow BLE001 -- Managed constructor_failure retains/rethrows; unmanaged builder keeps compatibility.
+        from agent.auxiliary_owned import constructor_failure
+        constructor_failure(error)
         return None
 
 
