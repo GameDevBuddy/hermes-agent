@@ -1,3 +1,4 @@
+import { desktopSurface } from '@/gamedevbuddy/host'
 import { useStore } from '@nanostores/react'
 import { atom } from 'nanostores'
 
@@ -27,7 +28,7 @@ import { $activeSessionId, $selectedStoredSessionId } from '@/store/session'
 // The demo is borrowed: nothing it changes is persisted as the user's layout.
 $chatOnboardingSolo.subscribe(solo => {
   modeLayout.hold(solo)
-  document.documentElement.toggleAttribute('data-onboarding-demo', solo)
+  desktopSurface().toggleAttribute('data-onboarding-demo', solo)
 })
 
 export const $chatOnboardingThreadIds = atom<readonly string[]>([])

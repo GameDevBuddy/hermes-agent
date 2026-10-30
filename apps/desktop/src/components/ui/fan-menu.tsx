@@ -1,3 +1,4 @@
+import { desktopSurfaceBody } from '@/gamedevbuddy/host'
 import {
   type CSSProperties,
   memo,
@@ -293,7 +294,7 @@ export function FanMenu({ direction = 'vertical', gap = 4, hint = true, hub, ite
               step={rect.width + gap}
               tipAnchor={tipAnchor}
             />,
-            document.body
+            desktopSurfaceBody()
           )
         : null}
     </>

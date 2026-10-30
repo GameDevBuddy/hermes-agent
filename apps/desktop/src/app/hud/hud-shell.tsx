@@ -1,3 +1,4 @@
+import { desktopSurface } from '@/gamedevbuddy/host'
 import { useStore } from '@nanostores/react'
 import { type CSSProperties, useCallback, useEffect, useRef, useState } from 'react'
 import { useNavigate } from 'react-router'
@@ -312,11 +313,11 @@ export function HudShell() {
     const style = document.createElement('style')
     style.textContent = 'html,body,#root{background:transparent !important;}'
     document.head.appendChild(style)
-    document.documentElement.setAttribute('data-hud-window', '')
+    desktopSurface().setAttribute('data-hud-window', '')
 
     return () => {
       style.remove()
-      document.documentElement.removeAttribute('data-hud-window')
+      desktopSurface().removeAttribute('data-hud-window')
     }
   }, [])
 

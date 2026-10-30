@@ -1,3 +1,4 @@
+import { desktopSurfaceBody } from '@/gamedevbuddy/host'
 import { useStore } from '@nanostores/react'
 import { type ReactNode, useLayoutEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
@@ -65,7 +66,7 @@ export function FloatingComposerSurface({ children }: ComposerSurfaceProps) {
     host.toggleAttribute('data-pane-hidden', !visible)
     host.inert = !visible
 
-    const parent = floating ? document.body : anchorRef.current
+    const parent = floating ? desktopSurfaceBody() : anchorRef.current
 
     if (parent && host.parentElement !== parent) {
       parent.appendChild(host)

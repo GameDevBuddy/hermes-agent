@@ -127,6 +127,8 @@ def run_tool_round(
             tc for tc in assistant_message.tool_calls if tc.function.name in agent.valid_tool_names
         ]
 
+    from agent.tool_commit_owner import owner_call
+    owner_call(agent, "stage", assistant_msg)
     # Persist the tool-call turn before any tool side effects so resume sees the executed
     # block if a destructive tool restarts Hermes.
     try:

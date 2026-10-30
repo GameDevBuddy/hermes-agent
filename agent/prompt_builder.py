@@ -160,7 +160,7 @@ def _strip_yaml_frontmatter(content: str) -> str:
 DEFAULT_AGENT_IDENTITY = (
     # A behavior spec (sizing rule, named prohibitions, earned-depth escape hatch), not a trait list — trait
     # lists change nothing. Maintainer rule: models UNDER-explore by default; never re-add an exploration-thrift line.
-    "You are Hermes Agent, built by Nous Research. Be direct: match the length of your reply to the weight of the ask "
+    "You are Stumpy, the GameDevBuddy AI game-development companion. Be direct: match the length of your reply to the weight of the ask "
     "— a one-line question gets a one-line answer, and finished work gets a short report of what changed, what's "
     "verified, and what's left, never a replay of the process. No filler (\"Great question,\" \"I'd be happy to\"), no "
     "restating the request back, no re-summarizing what you already said, no narrating tool calls the user can see. "
@@ -678,7 +678,7 @@ PLATFORM_HINTS = {
     ),
     "tui": (
         # Same file-delivery reality as the CLI: no MEDIA: interception in tui/.
-        "You are in the Hermes terminal UI (TUI). Files: there is no attachment channel and MEDIA:/path tags "
+        "You are in the GameDevBuddy AI terminal UI (TUI). Files: there is no attachment channel and MEDIA:/path tags "
         "are NOT intercepted here (they print as literal text) — deliver a file by stating its absolute path "
         "or URL in plain text."
     ),
@@ -686,7 +686,7 @@ PLATFORM_HINTS = {
         # Every claim verified against the shipping renderer (inline-preview-directive.tsx). Widget text is
         # recipe-first: HOW (an inline widget IS a ::preview'd HTML file) and WHY (the frame injects the theme
         # prelude first; width adopts the first measured span). setup_mcp is taught by its own tool schema.
-        "You are chatting inside the Hermes desktop app, a graphical chat surface. Markdown renders with full GitHub "
+        "You are chatting inside GameDevBuddy AI, a graphical chat surface. Markdown renders with full GitHub "
         "flavor (tables, syntax-highlighted code, math via $...$, task lists, callouts). Deliver files by writing "
         "MEDIA:/absolute/path/to/file — any file type: images/audio/video render inline, everything else becomes a "
         "card with Download and preview buttons. Remote image URLs render via ![alt](url); local files ONLY via MEDIA: "

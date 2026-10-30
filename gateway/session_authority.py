@@ -980,6 +980,8 @@ class SessionAuthority:
         # The turn's executor thread runs this; the stream lock orders it against session.steer's latch.
         with live.event_stream.lock if live is not None else contextlib.nullcontext():
             self.adopted[session_id] = (generation, agent)
+            from gateway.session_tool_commits import install_tool_commit_owner
+            install_tool_commit_owner(self, session_id, generation, agent)
             clear = getattr(agent, 'clear_interrupt', None)
             if self.delivered_stops.pop(session_id, generation) != generation and clear is not None:
                 clear()

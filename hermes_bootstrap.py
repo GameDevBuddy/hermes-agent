@@ -461,6 +461,12 @@ def export_scratch_tmp_env() -> None:
     import so every entry point and every child they spawn inherits it; ``hermes_cli.main``
     re-runs it after ``--profile`` re-homes the process. Never raises.
     """
+    retained = globals().get("_retained_contract")
+    if retained is not None:
+        # get_scratch_dir(prune=True) can spawn a detached pruner. The existing
+        # host must prepare and bind this private scratch before interpreter start.
+        retained.require_bootstrap_tmp()
+        return
     try:
         from hermes_constants import export_scratch_tmp_env as _export
         _export()
@@ -508,12 +514,20 @@ def _legacy_post_swap_invocation(argv: list[str]) -> tuple[Path, list[str]] | No
 harden_import_path(str(_root))
 
 
+_retained_api = sys.modules.get("hermes_retained_bootstrap")
+_retained_contract = _retained_api.current_for(_root) if _retained_api is not None else None
+
+
 def _settle_interrupted_update() -> None:
     """Put back the tree a killed ``hermes update`` left half-moved, before PM, launch preparation or
     any Hermes package imports from it (``hermes_cli._early_recovery``; ``hermes_cli.main`` repeats the
     call for entries that never reach this module). A killed ZIP swap can leave ``hermes_cli/`` itself
     moved aside: the journal-driven restore then runs from that moved-aside copy, the code that wrote
     the journal. Root files are never absent mid-swap (``update_cmd_zip._commit_staged_replacements``)."""
+    if _retained_contract is not None:
+        # Refuse a pending transaction BEFORE importing a moved-aside recovery copy.
+        _retained_contract.require_inputs()
+        return
     try:
         from hermes_cli import _early_recovery as recovery
     except ImportError:
@@ -559,6 +573,8 @@ _pin_launcher_home()
 
 _legacy_post_swap = _legacy_post_swap_invocation(sys.argv[1:])
 if _legacy_post_swap is not None:
+    if _retained_contract is not None:
+        _retained_contract.refuse("post-swap-continuation-requires-owned-maintenance")
     # This continuation exists precisely because the replacement tree may not
     # run under the old release's dependency graph. Take it over before PM
     # activation, launch preparation, or argparse imports any of that graph.
@@ -581,7 +597,25 @@ from hermes_cli._parser import command_argv
 
 # Repair needs only stdlib. Do not activate the damaged tree to reach it.
 _pm_repair = command_argv(sys.argv[1:])[:2] == ["pm", "repair"]
-if not _pm_repair:
+if _retained_contract is not None:
+    from hermes_cli.steward import read_install_stamp
+    from hermes_cli.venv_sync import _is_sealed
+
+    _retained_contract.require_inputs()
+    try:
+        _retained_sealed = _is_sealed(_root)
+    except (RuntimeError, OSError):
+        _retained_contract.refuse("sealed-owner-managed-package-required")
+    if not _retained_sealed or read_install_stamp(_root).get("updateMechanism") == "self":
+        _retained_contract.refuse("sealed-owner-managed-package-required")
+    # prepare_launch is intentionally not called in this branch: source-completion
+    # obligations were refused above, never repaired or relaunched inside this lifetime.
+    recover_if_needed(_root)
+    try:
+        activate_dependencies(_root)
+    except (RuntimeError, OSError):
+        _retained_contract.refuse("dependency-activation-requires-owned-maintenance")
+elif not _pm_repair:
     from hermes_cli.venv_sync import prepare_launch, relaunch_command
 
     try:

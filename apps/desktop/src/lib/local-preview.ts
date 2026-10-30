@@ -1,3 +1,4 @@
+import { desktopSurface } from '@/gamedevbuddy/host'
 import { fileUrlToNativePath } from '@hermes/shared'
 import DOMPurify from 'dompurify'
 
@@ -196,7 +197,7 @@ export function remoteHtmlPreviewDocument(dataUrl: string): string | null {
   policy.content = csp
   document.head.prepend(policy)
 
-  return `<!doctype html>${document.documentElement.outerHTML}`
+  return `<!doctype html>${desktopSurface().outerHTML}`
 }
 
 export async function openPreviewTargetInBrowser(target: PreviewTarget): Promise<void> {

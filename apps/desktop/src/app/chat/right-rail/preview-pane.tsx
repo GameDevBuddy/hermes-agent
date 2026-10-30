@@ -1,3 +1,4 @@
+import { desktopSurfaceBody } from '@/gamedevbuddy/host'
 // Side-effect import: watches the turn edge so the overlay keeps a pulse while
 // the model reasons. Lives here because the pane is what makes it reachable.
 import './preview-mind'
@@ -405,14 +406,14 @@ export function PreviewPane({
       const pointerId = event.pointerId
       const startY = event.clientY
       const startHeight = consoleHeight
-      const previousCursor = document.body.style.cursor
-      const previousUserSelect = document.body.style.userSelect
+      const previousCursor = desktopSurfaceBody().style.cursor
+      const previousUserSelect = desktopSurfaceBody().style.userSelect
       let active = true
 
       handle.setPointerCapture?.(pointerId)
 
-      document.body.style.cursor = 'row-resize'
-      document.body.style.userSelect = 'none'
+      desktopSurfaceBody().style.cursor = 'row-resize'
+      desktopSurfaceBody().style.userSelect = 'none'
       // The webview above the console must not swallow the gesture.
       const releaseGuests = guardGuestPointers()
 
@@ -436,8 +437,8 @@ export function PreviewPane({
         active = false
         resize.finish()
         releaseGuests()
-        document.body.style.cursor = previousCursor
-        document.body.style.userSelect = previousUserSelect
+        desktopSurfaceBody().style.cursor = previousCursor
+        desktopSurfaceBody().style.userSelect = previousUserSelect
         handle.releasePointerCapture?.(pointerId)
         window.removeEventListener('pointermove', handleMove, true)
         window.removeEventListener('pointerup', cleanup, true)
@@ -878,7 +879,7 @@ export function PreviewPane({
         throw new Error('preview webview is not ready')
       }
 
-      const text = await webview.executeJavaScript('document.body ? document.body.innerText : ""')
+      const text = await webview.executeJavaScript('desktopSurfaceBody() ? desktopSurfaceBody().innerText : ""')
 
       return {
         text: typeof text === 'string' ? text : '',

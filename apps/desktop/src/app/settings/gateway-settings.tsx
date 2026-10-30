@@ -1,3 +1,4 @@
+import { gameDevBuddyHost } from '@/gamedevbuddy/host'
 import { isGatewayReauthRequired } from '@hermes/shared'
 import { useStore } from '@nanostores/react'
 import { useEffect, useRef, useState } from 'react'
@@ -1224,9 +1225,10 @@ function GatewayConnectionSettings({ embedded, standalone }: { embedded: boolean
                     <AlertCircle className="mt-0.5 size-4 shrink-0" />
                     <span>
                       {g.cloudNoAgents.before}
-                      <ExternalLink href="https://portal.nousresearch.com/agents" showExternalIcon={false}>
-                        {g.cloudNoAgents.linkText}
-                      </ExternalLink>
+                      {gameDevBuddyHost() ? <button type="button" className="underline" onClick={() => gameDevBuddyHost()?.openAccount()}>Manage GameDevBuddy account</button> :
+                        <ExternalLink href="https://portal.nousresearch.com/agents" showExternalIcon={false}>
+                          {g.cloudNoAgents.linkText}
+                        </ExternalLink>}
                       {g.cloudNoAgents.after}
                     </span>
                   </div>

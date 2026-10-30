@@ -12,6 +12,7 @@
  */
 
 import { sanitizeComposerInput } from '@/lib/composer-input-sanitize'
+import { ownsDesktopEvent } from '@/gamedevbuddy/host'
 import { DATA_IMAGE_URL_RE } from '@/lib/embedded-images'
 import { isEditableTarget } from '@/lib/keybinds/combo'
 import { composerFocusBlockedBySurface } from '@/lib/keybinds/composer-focus-keys'
@@ -54,6 +55,7 @@ export function routeClipboardToComposer(clipboard: DataTransfer): boolean {
  *  keydown listener). Yields to editables — they own their own paste — and to
  *  every surface that owns its keys per type-to-focus. */
 export function handleWindowPaste(event: ClipboardEvent) {
+  if (!ownsDesktopEvent(event)) {return}
   if (
     event.defaultPrevented ||
     !event.clipboardData ||

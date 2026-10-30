@@ -1,3 +1,4 @@
+import { desktopSurfaceBody } from '@/gamedevbuddy/host'
 const MIME_EXTENSIONS: Record<string, string> = {
   'image/bmp': '.bmp',
   'image/gif': '.gif',
@@ -52,7 +53,7 @@ export function clickDownloadLink(href: string, filename: string): void {
   link.download = filename
   link.rel = 'noopener noreferrer'
   link.style.display = 'none'
-  document.body.append(link)
+  desktopSurfaceBody().append(link)
   link.click()
   link.remove()
 }

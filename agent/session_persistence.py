@@ -340,13 +340,18 @@ def _db_flush_write(agent, batch_rows: list[dict[str, Any]], batch_msgs: list[di
     """One transaction for the turn's new rows: on failure nothing lands and no markers are stamped."""
     if not batch_rows:
         return
+    from agent.tool_commit_owner import owner_call
+    requested = owner_call(agent, "indices", batch_msgs, default=())
+    witness_kwargs = {"tool_commit_witness_rows": requested} if requested else {}
     agent._session_db.append_messages_batch(
         session_id=agent.session_id, messages=batch_rows,
         compression_lock_holder=getattr(agent, "_active_compression_lock_holder", None),
         turn_lease_holder=getattr(agent, "_active_session_turn_lease_holder", None),
         turn_lease_ttl_seconds=getattr(agent, "_active_session_turn_lease_ttl_seconds", 300.0) or 300.0,
+        **witness_kwargs,
     )
     sync_flushed_message_markers(batch_msgs, batch_rows)
+    owner_call(agent, "consume", batch_msgs, batch_rows)
     if _newest_checkpoint_carrier(batch_msgs, "codex_reasoning_items") >= 0:
         # The insert already rewrote the older rows (SessionDB._drop_shadowed_checkpoint_rows); mirror it on
         # the live transcript so forks/compaction built from memory carry one checkpoint too. Markers stay:

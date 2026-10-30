@@ -1,3 +1,4 @@
+import { desktopSurfaceBody } from '@/gamedevbuddy/host'
 import { useStore } from '@nanostores/react'
 import { Dialog as DialogPrimitive } from 'radix-ui'
 import { type ComponentProps, lazy, type ReactNode, Suspense, useEffect, useState } from 'react'
@@ -70,7 +71,7 @@ function BootFailureModal({
       }}
       open
     >
-      <DialogPrimitive.Portal>
+      <DialogPrimitive.Portal container={desktopSurfaceBody()}>
         <DialogPrimitive.Content aria-describedby={undefined} aria-modal="true" asChild ref={setContentNode}>
           <div
             className="fixed inset-0 z-(--z-setup) flex items-center justify-center bg-(--ui-chat-surface-background) p-6"

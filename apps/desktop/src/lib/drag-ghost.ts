@@ -1,3 +1,4 @@
+import { desktopSurfaceBody } from '@/gamedevbuddy/host'
 /**
  * A flat, pointer-following drag chip — the shared "what am I holding"
  * affordance for in-app pointer drags. Plain DOM (no React) so it survives a
@@ -30,7 +31,7 @@ export function createDragGhost(label: string): DragGhost {
     'text-overflow:ellipsis;white-space:nowrap;padding:0.25rem 0.625rem;opacity:0.6;' +
     'background:var(--ui-sidebar-surface-background,var(--dt-card));color:var(--ui-text-primary);' +
     'font-size:0.75rem;font-weight:500;will-change:transform'
-  document.body.appendChild(el)
+  desktopSurfaceBody().appendChild(el)
 
   return {
     moveTo(x, y) {

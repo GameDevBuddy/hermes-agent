@@ -1,3 +1,4 @@
+import { desktopSurface } from '@/gamedevbuddy/host'
 /**
  * Pane geometry — AABB INTERSECTION → WINDOW-CONTROL AWARENESS. The native
  * window controls (macOS traffic lights top-left / Windows-WSLg overlay
@@ -194,7 +195,7 @@ const sashDragging = () => sashDragDepth > 0
  * geometry. Call once from the tree root; returns the disposer.
  */
 export function publishWorkspaceGeometry(): () => void {
-  const root = document.documentElement
+  const root = desktopSurface()
   let el: HTMLElement | null = null
   let lastLeft = NaN
   let lastRight = NaN

@@ -1,3 +1,4 @@
+import { desktopSurfaceBody } from '@/gamedevbuddy/host'
 /**
  * Hover actions for directive chips in a composer.
  *
@@ -165,6 +166,6 @@ export function ComposerDirectiveActions({ editorRef }: { editorRef: RefObject<H
         {anchor.action.label(t)}
       </button>
     </div>,
-    document.body
+    desktopSurfaceBody()
   )
 }

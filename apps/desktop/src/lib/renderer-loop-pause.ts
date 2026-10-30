@@ -1,3 +1,4 @@
+import { desktopSurface } from '@/gamedevbuddy/host'
 interface WindowStatePayload {
   isMinimized?: boolean
   isVisible?: boolean
@@ -60,7 +61,7 @@ export function createRendererLoopPauseController(onChange: () => void, { pauseW
  * returned cleanup; overlay windows intentionally do not install this state.
  */
 export function installRendererAnimationPauseState(): () => void {
-  const root = document.documentElement
+  const root = desktopSurface()
   let controller: ReturnType<typeof createRendererLoopPauseController>
 
   const sync = () => root.toggleAttribute(RENDERER_ANIMATIONS_PAUSED_ATTRIBUTE, controller.isPaused())

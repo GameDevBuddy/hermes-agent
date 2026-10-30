@@ -1,3 +1,4 @@
+import { desktopSurface, desktopSurfaceBody } from '@/gamedevbuddy/host'
 import { useStore } from '@nanostores/react'
 import { useEffect, useMemo, useState } from 'react'
 
@@ -201,7 +202,7 @@ function resolvedColorScheme(): 'light' | 'dark' {
     return 'light'
   }
 
-  const mode = document.documentElement.dataset.hermesMode
+  const mode = desktopSurface().dataset.hermesMode
 
   if (mode === 'light' || mode === 'dark') {
     return mode
@@ -220,7 +221,7 @@ export function collectThemeBridge(): { vars: Record<string, string>; font: stri
   const vars: Record<string, string> = {}
 
   if (typeof document !== 'undefined') {
-    const root = getComputedStyle(document.documentElement)
+    const root = getComputedStyle(desktopSurface())
 
     for (const [alias, source] of Object.entries(THEME_BRIDGE_TOKENS)) {
       const value = root.getPropertyValue(source).trim()
@@ -231,7 +232,7 @@ export function collectThemeBridge(): { vars: Record<string, string>; font: stri
     }
   }
 
-  const font = typeof document === 'undefined' ? '' : getComputedStyle(document.body).fontFamily
+  const font = typeof document === 'undefined' ? '' : getComputedStyle(desktopSurfaceBody()).fontFamily
 
   return { vars, font, colorScheme: resolvedColorScheme() }
 }
@@ -270,7 +271,7 @@ export function measurementScript(token: string): string {
   return (
     '<script>(function(){var t=' +
     JSON.stringify(token) +
-    ';var lastH=0,lastW=0;function post(){var d=document.documentElement;var b=document.body;' +
+    ';var lastH=0,lastW=0;function post(){var d=desktopSurface();var b=desktopSurfaceBody();' +
     'var h=Math.max(d?d.scrollHeight:0,b?b.scrollHeight:0);' +
     'var w=0;if(b){var kids=b.children;var L=Infinity,R=0;for(var i=0;i<kids.length;i++){' +
     'var r=kids[i].getBoundingClientRect();if(r.width===0&&r.height===0)continue;' +
@@ -281,7 +282,7 @@ export function measurementScript(token: string): string {
     JSON.stringify(SIZE_MESSAGE_TYPE) +
     ',token:t,height:h,width:w},"*")}}' +
     'if(typeof ResizeObserver==="function"){var ro=new ResizeObserver(post);' +
-    'ro.observe(document.documentElement);if(document.body)ro.observe(document.body)}' +
+    'ro.observe(desktopSurface());if(desktopSurfaceBody())ro.observe(desktopSurfaceBody())}' +
     'addEventListener("load",post);post()})()</script>'
   )
 }

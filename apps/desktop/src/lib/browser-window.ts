@@ -1,4 +1,5 @@
 import { randomUuid } from '@hermes/shared'
+import { gameDevBuddyHost } from '@/gamedevbuddy/host'
 
 import type { HermesApiRequest } from '@/global'
 import { dismissNotification } from '@/store/notifications'
@@ -54,7 +55,8 @@ const asError = (error: unknown) => (error instanceof Error ? error : new Error(
 /** Open synchronously in the user gesture; never rely on an opener/storage copy. */
 export function createBrowserWindowOpener({ api, basePath, privateSession }: BrowserWindowOptions) {
   return (target: URL): Promise<{ ok: true }> =>
-    privateSession ? openLaunchLinkWindow(target, api, basePath) : openGatedWindow(target)
+    gameDevBuddyHost()?.windowUrl ? openGatedWindow(new URL(gameDevBuddyHost()!.windowUrl!(target.href))) :
+      privateSession ? openLaunchLinkWindow(target, api, basePath) : openGatedWindow(target)
 }
 
 function openGatedWindow(target: URL): Promise<{ ok: true }> {

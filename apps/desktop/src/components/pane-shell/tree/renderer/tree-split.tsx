@@ -1,3 +1,4 @@
+import { desktopSurfaceBody } from '@/gamedevbuddy/host'
 /**
  * Split node renderer — a flex row/column whose 1px seams double as resize
  * sashes (the seam IS the boundary — junction-owned, never doubled). Sizing
@@ -214,8 +215,8 @@ export function TreeSplit({
       const totalWeight = node.weights.reduce((a, b) => a + b, 0) || 1
       const pxPerWeight = totalPx / totalWeight
       const start = horizontal ? e.clientX : e.clientY
-      const restoreCursor = document.body.style.cursor
-      const restoreSelect = document.body.style.userSelect
+      const restoreCursor = desktopSurfaceBody().style.cursor
+      const restoreSelect = desktopSurfaceBody().style.userSelect
 
       // Each side of the seam resolves to a RESIZE TARGET: a fixed zone (the
       // sash writes its px override — sidebar semantics) or the flex run
@@ -439,8 +440,8 @@ export function TreeSplit({
         // Synthetic events.
       }
 
-      document.body.style.cursor = horizontal ? 'col-resize' : 'row-resize'
-      document.body.style.userSelect = 'none'
+      desktopSurfaceBody().style.cursor = horizontal ? 'col-resize' : 'row-resize'
+      desktopSurfaceBody().style.userSelect = 'none'
       // Webview/iframe guests must not swallow the gesture — without this the
       // drag froze the moment the pointer entered the in-app browser, so the
       // seam could only shrink it a few px per press.
@@ -511,8 +512,8 @@ export function TreeSplit({
           // release publishes exactly one fresh measurement.
           endSashDrag()
           releaseGuests()
-          document.body.style.cursor = restoreCursor
-          document.body.style.userSelect = restoreSelect
+          desktopSurfaceBody().style.cursor = restoreCursor
+          desktopSurfaceBody().style.userSelect = restoreSelect
 
           try {
             handle.releasePointerCapture?.(pointerId)

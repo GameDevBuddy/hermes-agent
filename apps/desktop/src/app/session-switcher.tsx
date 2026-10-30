@@ -1,3 +1,4 @@
+import { desktopSurfaceBody } from '@/gamedevbuddy/host'
 import { useStore } from '@nanostores/react'
 import { useEffect, useRef } from 'react'
 import { createPortal } from 'react-dom'
@@ -86,6 +87,6 @@ export function SessionSwitcher() {
         })}
       </div>
     </>,
-    document.body
+    desktopSurfaceBody()
   )
 }

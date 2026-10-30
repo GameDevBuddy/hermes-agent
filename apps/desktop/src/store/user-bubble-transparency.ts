@@ -1,3 +1,4 @@
+import { desktopSurface } from '@/gamedevbuddy/host'
 /**
  * Message bubble transparency — how much of your own bubble's fill shows.
  *
@@ -26,7 +27,7 @@ export function setUserBubbleTransparency(value: number): void {
 
 if (typeof window !== 'undefined') {
   $userBubbleTransparency.subscribe(value => {
-    const root = document.documentElement
+    const root = desktopSurface()
 
     // The default paints nothing: styles.css falls back to the full fill, so a
     // user who never touched the lever gets byte-identical CSS to before.

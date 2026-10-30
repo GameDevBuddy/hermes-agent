@@ -1,3 +1,4 @@
+import { desktopSurfaceBody } from '@/gamedevbuddy/host'
 /**
  * Electron <webview> guests (and iframes) hit-test in their own process, so a
  * pointer-capture drag in the embedder goes silent the moment the cursor
@@ -15,7 +16,7 @@ let depth = 0
  *  lostpointercapture). */
 export function guardGuestPointers(): () => void {
   if (depth === 0) {
-    document.body.classList.add('guest-pointer-lock')
+    desktopSurfaceBody().classList.add('guest-pointer-lock')
   }
 
   depth += 1
@@ -30,7 +31,7 @@ export function guardGuestPointers(): () => void {
     depth -= 1
 
     if (depth === 0) {
-      document.body.classList.remove('guest-pointer-lock')
+      desktopSurfaceBody().classList.remove('guest-pointer-lock')
     }
   }
 }

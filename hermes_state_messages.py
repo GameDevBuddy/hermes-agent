@@ -429,11 +429,13 @@ class SessionMessagesMixin(SessionDetachedResultsMixin, SessionTodoResultMixin):
     def append_messages_batch(
         self, session_id: str, messages: list[dict[str, Any]], compression_lock_holder: Optional[str] = None,
         turn_lease_holder: Optional[str] = None, chunk_rows: Optional[int] = None,
-        turn_lease_ttl_seconds: float = 300.0) -> int:
+        turn_lease_ttl_seconds: float = 300.0, tool_commit_witness_rows: tuple[tuple[int, str | None], ...] = ()) -> int:
         """Append *messages* in ONE write txn (all rows land or none, guards run once); returns the inserted
         count. ``chunk_rows`` bounds txn size for LARGE copies (branch seeds; FTS triggers run per row)."""
         if not messages:
             return 0
+        if tool_commit_witness_rows and chunk_rows is not None:
+            raise ValueError("canonical tool witness requires the original unchunked batch")
         if chunk_rows is not None and len(messages) > chunk_rows:
             tool_uid_index: dict[str, str] = {}
             for msg in messages:  # each chunk indexes only its own rows: pair results across chunk boundaries
@@ -444,11 +446,13 @@ class SessionMessagesMixin(SessionDetachedResultsMixin, SessionTodoResultMixin):
                 for start in range(0, len(messages), chunk_rows))
         return self._execute_transcript_write(lambda conn: self._append_messages_in_transaction(
             conn, session_id, messages, compression_lock_holder=compression_lock_holder,
-            turn_lease_holder=turn_lease_holder, turn_lease_ttl_seconds=turn_lease_ttl_seconds),
+            turn_lease_holder=turn_lease_holder, turn_lease_ttl_seconds=turn_lease_ttl_seconds,
+            tool_commit_witness_rows=tool_commit_witness_rows),
             messages, patience_s=self._TRANSCRIPT_WRITE_PATIENCE_S)
 
     def _append_messages_in_transaction(self, conn, session_id, messages, *,
-            compression_lock_holder=None, turn_lease_holder=None, turn_lease_ttl_seconds=300.0):
+            compression_lock_holder=None, turn_lease_holder=None, turn_lease_ttl_seconds=300.0,
+            tool_commit_witness_rows=()):
         self._check_transcript_write_guards(conn, session_id, compression_lock_holder,
             turn_lease_holder=turn_lease_holder, turn_lease_ttl_seconds=turn_lease_ttl_seconds)
         from agent.transcript_repair import resolve_and_repair_transcript_batch
@@ -465,6 +469,9 @@ class SessionMessagesMixin(SessionDetachedResultsMixin, SessionTodoResultMixin):
         )
         inserted, tool_calls_total = self._insert_message_rows(conn, session_id, inserted_rows)
         self._bump_session_counters(conn, session_id, inserted, tool_calls_total, unit=False)
+        if tool_commit_witness_rows:
+            from agent.tool_commit_rows import capture_witnesses
+            capture_witnesses(self, conn, session_id, messages, tool_commit_witness_rows)
         return inserted
 
     _ROW_STATE_KEYS = ("_row_id", DB_ROW_SNAPSHOT, "timestamp")
@@ -480,6 +487,7 @@ class SessionMessagesMixin(SessionDetachedResultsMixin, SessionTodoResultMixin):
         def _restore() -> None:
             for msg, state in zip(messages, pre_state):
                 msg.pop(CANONICAL_ROW, None)
+                msg.pop("_gdb_provisional_tool_commit", None)
                 for key, value in zip(self._ROW_STATE_KEYS, state):
                     if value is _absent:
                         msg.pop(key, None)

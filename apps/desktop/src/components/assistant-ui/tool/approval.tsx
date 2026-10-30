@@ -1,3 +1,4 @@
+import { desktopSurfaceBody } from '@/gamedevbuddy/host'
 'use client'
 
 import { useAuiState } from '@assistant-ui/react'
@@ -258,7 +259,7 @@ const ApprovalCard: FC<ApprovalCardProps> = ({ request, total, position, stack }
   const rememberFocusOrigin = useCallback(() => {
     const active = document.activeElement
 
-    if (active instanceof HTMLElement && active !== document.body && !cardRef.current?.contains(active)) {
+    if (active instanceof HTMLElement && active !== desktopSurfaceBody() && !cardRef.current?.contains(active)) {
       focusOrigin.current = active
     }
   }, [])
@@ -271,7 +272,7 @@ const ApprovalCard: FC<ApprovalCardProps> = ({ request, total, position, stack }
 
     // Only when the answer itself is what stranded focus — never steal from a
     // surface the user moved to while the reply was in flight.
-    if (origin?.isConnected && (!active || active === document.body || cardRef.current?.contains(active))) {
+    if (origin?.isConnected && (!active || active === desktopSurfaceBody() || cardRef.current?.contains(active))) {
       origin.focus({ preventScroll: true })
     }
   }, [])

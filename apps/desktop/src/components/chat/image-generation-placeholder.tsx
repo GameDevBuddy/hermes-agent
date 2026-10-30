@@ -1,3 +1,4 @@
+import { desktopSurface } from '@/gamedevbuddy/host'
 import { type FC, useCallback, useEffect, useRef } from 'react'
 
 import { useResizeObserver } from '@/hooks/use-resize-observer'
@@ -278,7 +279,7 @@ export const DiffusionCanvas: FC = () => {
   useEffect(() => {
     const probe = document.createElement('span')
     probe.style.cssText = 'position:absolute;width:0;height:0;visibility:hidden;pointer-events:none'
-    document.documentElement.appendChild(probe)
+    desktopSurface().appendChild(probe)
 
     const sync = () => {
       themeRef.current = readTheme(probe)

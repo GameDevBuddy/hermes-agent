@@ -1,3 +1,4 @@
+import { desktopSurface } from '@/gamedevbuddy/host'
 /**
  * Layout tree store: one persisted tree replaces paneStates side/band
  * overrides. The DEFAULT tree is declared by the app root (like config);
@@ -567,14 +568,14 @@ export function trackActiveTreeGroup(): () => void {
   window.addEventListener('pointerdown', trackActive, true)
   window.addEventListener('focusin', trackActive, true)
   window.addEventListener('pointerover', trackHover, true)
-  document.documentElement.addEventListener('pointerleave', clearHover)
+  desktopSurface().addEventListener('pointerleave', clearHover)
   window.addEventListener('blur', clearHover)
 
   return () => {
     window.removeEventListener('pointerdown', trackActive, true)
     window.removeEventListener('focusin', trackActive, true)
     window.removeEventListener('pointerover', trackHover, true)
-    document.documentElement.removeEventListener('pointerleave', clearHover)
+    desktopSurface().removeEventListener('pointerleave', clearHover)
     window.removeEventListener('blur', clearHover)
   }
 }

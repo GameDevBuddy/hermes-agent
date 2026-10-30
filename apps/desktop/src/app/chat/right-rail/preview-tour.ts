@@ -38,7 +38,7 @@ function buildTourScript(action: TourAction): string {
     var style = document.createElement('style');
     style.id = '__hermes-tour-style';
     style.textContent = ${JSON.stringify(driverCss)};
-    (document.head || document.documentElement).appendChild(style);
+    (document.head || desktopSurface()).appendChild(style);
   }
   return JSON.stringify(w.__hermesTourEngine(
     w.driver.js.driver,

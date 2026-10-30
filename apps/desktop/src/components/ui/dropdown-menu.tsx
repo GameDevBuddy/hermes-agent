@@ -1,3 +1,4 @@
+import { desktopSurfaceBody } from '@/gamedevbuddy/host'
 import { DropdownMenu as DropdownMenuPrimitive } from 'radix-ui'
 import * as React from 'react'
 
@@ -174,7 +175,7 @@ function DropdownMenu({ ...props }: React.ComponentProps<typeof DropdownMenuPrim
 }
 
 function DropdownMenuPortal({ ...props }: React.ComponentProps<typeof DropdownMenuPrimitive.Portal>) {
-  return <DropdownMenuPrimitive.Portal data-slot="dropdown-menu-portal" {...props} />
+  return <DropdownMenuPrimitive.Portal container={desktopSurfaceBody()} data-slot="dropdown-menu-portal" {...props} />
 }
 
 function DropdownMenuTrigger({ ...props }: React.ComponentProps<typeof DropdownMenuPrimitive.Trigger>) {
@@ -242,7 +243,7 @@ function DropdownMenuContent({
 }) {
   // An explicit target-owned container supports global menus whose component
   // lives outside the dialog's React context. Nested menus still inherit the
-  // enclosing dialog; everything else falls back to document.body.
+  // enclosing dialog; everything else falls back to desktopSurfaceBody().
   const container = usePopoverPortalContainer(portalContainer)
   const [hoverSubmenus] = React.useState(createHoverSubmenus)
 

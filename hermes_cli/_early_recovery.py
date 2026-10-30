@@ -85,6 +85,14 @@ def _project_root() -> Path:
     return Path(__file__).resolve().parent.parent
 
 
+def _retained_policy(project_root: Path | None = None):
+    policy_api = sys.modules.get("hermes_retained_bootstrap")
+    if policy_api is None or policy_api.current() is None:
+        return None
+    root = _project_root() if project_root is None else Path(project_root).resolve()
+    return policy_api.current_for(root)
+
+
 def _read_marker_attempts(marker_path: Path) -> int:
     """Attempt counter from a marker's opportunistic JSON body; corrupt/missing → 0."""
     try:
@@ -955,6 +963,12 @@ def restore_interrupted_pull(project_root: Path | None = None, *, after_failure:
     looks exactly like git's own half-written file and is restored too, as is a user edit to a
     conflicted path or, on git < 2.38, to a path both sides of a custom-branch merge changed.
     """
+    retained = _retained_policy(project_root)
+    if retained is not None:
+        retained.require_inputs()
+        if after_failure:
+            retained.refuse("failed-update-restoration-requires-owned-maintenance")
+        return False
     try:
         root = _project_root() if project_root is None else project_root
         marker = interrupted_pull_marker(root)
@@ -1342,6 +1356,9 @@ def relaunch_after_restore() -> None:
     Everything imported so far (this package, ``hermes_bootstrap``, ``hermes_cli.main`` itself) may
     be the killed git's new files, and they would run against the restored old tree.
     """
+    retained = _retained_policy()
+    if retained is not None:
+        retained.refuse("restoration-relaunch-requires-a-new-owner-allocation")
     argv = [sys.executable, *sys.orig_argv[1:]]
     sys.stdout.flush()
     sys.stderr.flush()
@@ -1393,6 +1410,12 @@ def recover_if_needed(project_root: Path | None = None, argv: list[str] | None =
     global _UPDATE_RETRY_RECOVERED
 
     root = _project_root() if project_root is None else Path(project_root).resolve()
+    retained = _retained_policy(root)
+    if retained is not None:
+        retained.require_inputs()
+        if explicit:
+            retained.refuse("explicit-repair-requires-owned-maintenance")
+        return False
     if not explicit and _pytest_owns_live_checkout(root):
         return False
     from hermes_cli._parser import command_argv

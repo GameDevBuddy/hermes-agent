@@ -34,9 +34,9 @@ function ridesWithProfile(profile?: null | string): boolean {
 }
 
 function connectionFor(bootstrap: BrowserBootstrap, profile: null | string | undefined, servedHere: boolean): HermesConnection {
-  if (!bootstrap.authRequired && !bootstrap.token) {throw webappSignInRequired()}
+  if (!bootstrap.host && !bootstrap.authRequired && !bootstrap.token) {throw webappSignInRequired()}
 
-  const baseUrl = `${window.location.origin}${bootstrap.basePath}`
+  const baseUrl = bootstrap.host?.apiBase ?? `${window.location.origin}${bootstrap.basePath}`
 
   return {
     authMode: bootstrap.authRequired ? 'oauth' : 'token',
@@ -68,7 +68,7 @@ function browserConnectionConfig(bootstrap: BrowserBootstrap, profile?: null | s
     remoteOauthConnected: bootstrap.authRequired,
     remoteTokenPlainText: false,
     remoteTokenPreview: null,
-    remoteTokenSet: Boolean(bootstrap.token),
+    remoteTokenSet: Boolean(bootstrap.token || bootstrap.host),
     secureTokenStorage: false,
     remoteUrl: `${window.location.origin}${bootstrap.basePath}`,
     sshHost: '',

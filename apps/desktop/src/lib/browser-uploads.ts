@@ -1,3 +1,4 @@
+import { desktopSurfaceBody } from '@/gamedevbuddy/host'
 import type { HermesApiRequest, HermesSelectPathsOptions, HermesStagedUpload } from '@/global'
 import { blobToDataUrl } from '@/lib/base64'
 import { type BrowserBootstrap, browserFetch } from '@/lib/browser-transport'
@@ -201,7 +202,7 @@ function selectBrowserFiles(
       },
       { once: true }
     )
-    document.body.append(input)
+    desktopSurfaceBody().append(input)
     input.click()
   })
 }

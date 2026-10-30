@@ -1,3 +1,4 @@
+import { ownsDesktopEvent } from '@/gamedevbuddy/host'
 import { useStore } from '@nanostores/react'
 import type { ReactNode } from 'react'
 import { useEffect, useMemo } from 'react'
@@ -675,6 +676,7 @@ export function AppContextMenu() {
     // we own the gesture, or it opens alongside the app menu; editables keep
     // the native menu there, for its working edit verbs and spelling suggestions.
     const onContextMenu = (event: MouseEvent) => {
+      if (!ownsDesktopEvent(event)) {return}
       const element = event.target instanceof Element ? event.target : null
 
       // Stop pane/row fallback menus without cancelling the native menu.

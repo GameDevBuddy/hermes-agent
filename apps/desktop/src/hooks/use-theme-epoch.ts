@@ -1,3 +1,4 @@
+import { desktopSurface } from '@/gamedevbuddy/host'
 import { useEffect, useState } from 'react'
 
 // Theme repaints (themes/context.tsx) toggle `.dark` + rewrite inline custom
@@ -14,7 +15,7 @@ let observer: MutationObserver | null = null
 export function onThemeRepaint(fn: () => void): () => void {
   if (!observer && typeof document !== 'undefined') {
     observer = new MutationObserver(() => listeners.forEach(l => l()))
-    observer.observe(document.documentElement, { attributeFilter: ATTRS, attributes: true })
+    observer.observe(desktopSurface(), { attributeFilter: ATTRS, attributes: true })
   }
 
   listeners.add(fn)
