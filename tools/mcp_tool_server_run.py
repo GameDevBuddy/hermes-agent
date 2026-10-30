@@ -553,6 +553,9 @@ class MCPServerRunMixin:
 
     async def shutdown(self):
         """Signal the Task to exit and wait for clean resource teardown."""
+        if self._owned_source is not None and self._owned_source.phase in ("draining", "closed"):
+            from tools.mcp_tool_owned import shutdown_server
+            return await shutdown_server(self)
         self._shutdown_event.set()
         # Also set reconnect: closes any race where _wait_for_lifecycle_event misses the
         # shutdown flag after returning "reconnect".

@@ -328,6 +328,7 @@ class MCPServerTask(MCPServerRunMixin, MCPServerTransportMixin, MCPServerHealthM
         "_lifecycle_started_at",
         "_list_cache_meta",
         "_max_lifetime_seconds",
+        "_owned_source",
         "_park_reason",
         "_pending_call_context",
         "_pending_refresh_tasks",
@@ -360,6 +361,11 @@ class MCPServerTask(MCPServerRunMixin, MCPServerTransportMixin, MCPServerHealthM
 
     def __init__(self, name: str):
         self.name = name
+        from hermes_owned_gateway import active
+        self._owned_source = active()
+        if self._owned_source is not None:
+            import contextvars
+            self._owned_source.register_mcp(self, contextvars.copy_context())
         self.session: Optional[Any] = None
         self.tool_timeout: float = _DEFAULT_TOOL_TIMEOUT
         self._task: Optional[asyncio.Task] = None

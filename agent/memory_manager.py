@@ -867,6 +867,18 @@ class MemoryManager:
         with self._sync_executor_lock:
             return dict(self._shutdown_drain_state)
 
+    def shutdown_owned(self):
+        with self._sync_executor_lock:
+            self._shutting_down = True
+            executor = self._sync_executor
+            futures = tuple(self._background_futures)
+        if executor is not None:
+            executor.shutdown(wait=True, cancel_futures=False)
+        for future in futures:
+            future.result()
+        for provider in reversed(self._providers):
+            provider.shutdown_owned()
+
     def _drain_sync_executor(self) -> None:
         """Give queued FIFO work a bounded chance, then abandon explicitly."""
         with self._sync_executor_lock:

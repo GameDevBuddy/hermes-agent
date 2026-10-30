@@ -60,6 +60,10 @@ class OwnedGatewaySource:
         self._unknown_hold = threading.Event()
         self.settlement = None
         self.child_transports = []
+        self.stderr_transports = []
+        self.unresolved_resource_refs = []
+        self.mcp_contexts = {}
+        self.entry = None
 
     def unknown(self, reason):
         with self._state_lock:
@@ -155,6 +159,13 @@ class OwnedGatewaySource:
             raise self.unknown("original-canonical-lifecycle-task-required")
         self.job.require_current_member()
 
+    def register_mcp(self, server, context):
+        self.require_child_work()
+        from tools.mcp_tool import MCPServerTask
+        if type(server) is not MCPServerTask or server in self.mcp_contexts:
+            raise self.unknown("actual-MCP-constructor-required")
+        self.mcp_contexts[server] = context
+
     def require_shutdown(self, runner):
         self.require_bound(runner)
         if not self._shutdown or not self._control_closed:
@@ -219,8 +230,10 @@ def current(contract):
 def run_foreground(source):
     try:
         source.require_attached(source.contract)
-        from gateway.run_owned import main
-        return main(source)
+        from gateway.run_owned import ManagedEntry
+        if type(source.entry) is not ManagedEntry or source.entry.source is not source:
+            raise OwnedGatewayUnknown("actual-coupled-managed-entry-required")
+        return source.entry.run()
     except BaseException as error:
         source.unknown(str(error))
         source.hold_unknown()

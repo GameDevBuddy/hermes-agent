@@ -20,9 +20,11 @@ def _start_deferred_state_db_integrity_check(evidence: dict) -> None:
     from agent.memory_provider import spawn_context_thread
     from gateway.lifecycle_ledger import STATE_DB_INTEGRITY_DEADLINE_S, run_deferred_integrity_check
     # Under the caller's profile scope: the scan resolves this gateway's state.db through it.
-    spawn_context_thread(
+    thread = spawn_context_thread(
         run_deferred_integrity_check, args=(evidence,),
-        kwargs={"deadline_s": STATE_DB_INTEGRITY_DEADLINE_S}, name="state-db-integrity-check").start()
+        kwargs={"deadline_s": STATE_DB_INTEGRITY_DEADLINE_S}, name="state-db-integrity-check")
+    thread.start()
+    return thread
 
 # Log-record parity with the origin module.
 logger = logging.getLogger("gateway.run")
@@ -733,11 +735,17 @@ def _start_gateway_early_environment_probe() -> None:
 
 
 async def start_gateway(config: Optional[GatewayConfig] = None, replace: bool = False,
-                        verbosity: Optional[int] = 0, force: bool = False, idle_exit: bool = False) -> bool:
+                        verbosity: Optional[int] = 0, force: bool = False, idle_exit: bool = False, *, owned_source=None) -> bool:
     """Start the gateway and run until interrupted; False if it failed to start (non-zero exit so
     systemd can auto-restart). ``replace`` kills any existing instance first (avoids restart-loop
     deadlocks); ``force`` starts without consulting the host owner at all; ``idle_exit`` arms the
     unmanaged idle exit (``gateway.run_idle_exit``) for a client-started daemon."""
+    if owned_source is not None:
+        from hermes_owned_gateway import OwnedGatewayUnknown
+        if replace or force or idle_exit:
+            raise OwnedGatewayUnknown("owned-route-does-not-adopt-replace-or-auto-exit")
+        from gateway.run_owned import start_managed
+        return await start_managed(owned_source, config)
     from gateway.run import (
         GatewayRunner,
         _best_effort,

@@ -240,7 +240,7 @@ async def start_gateway_api(runner, *, host: str = "127.0.0.1", port: int = 0, w
     mount = GatewayDashboardMount(runner, state)
     # Lifespan off: the dashboard's own lifespan runs when it is mounted (GatewayDashboardMount).
     config, server = build_listener_server(mount, host, port, auth_required=state.auth_required,
-                                           timeout_graceful_shutdown=5, lifespan="off")
+                                           timeout_graceful_shutdown=(None if getattr(runner, "_owned_gateway_source", None) is not None else 5), lifespan="off")
     family, kind, proto, _, address = socket.getaddrinfo(
         host, port, type=socket.SOCK_STREAM,
     )[0]

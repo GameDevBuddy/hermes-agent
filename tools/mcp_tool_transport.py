@@ -364,6 +364,9 @@ class MCPServerTransportMixin:
 
     async def _run_stdio(self, config: dict):
         """Run the server using stdio transport."""
+        if self._owned_source is not None:
+            from tools.mcp_tool_owned import run_stdio_owned
+            return await run_stdio_owned(self, config)
         if config.get("identity_header") is not None:  # copy-pasted HTTP block: warn, don't mislead
             logger.warning("MCP server '%s': identity_header is only supported on "
                            "HTTP/SSE transports — ignored for stdio servers", self.name)

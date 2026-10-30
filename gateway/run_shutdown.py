@@ -30,6 +30,7 @@ from gateway.restart import (
 from gateway.run_common import _UNSET
 from gateway.run_runtime import interrupt_side_agents, managed_turn_count, stop_managed_turns
 from gateway.run_shutdown_session_end import GatewaySessionEndMixin
+from gateway.run_shutdown_delivery import _send_error, _send_failed
 from gateway.shutdown_watchdog import arm_shutdown_watchdog, resolve_shutdown_watchdog_delay
 
 # Log-record parity with the origin module.
@@ -132,16 +133,6 @@ def _log_suppressed(level: int, msg: str, *args, exc_info: bool = False):
             logger.log(level, msg, *args, exc_info=(type(exc), exc, exc.__traceback__))
         else:
             logger.log(level, msg, *args, exc)
-
-
-def _send_failed(result: Any) -> bool:
-    """True when an adapter ``send()`` result explicitly reports failure."""
-    return result is not None and getattr(result, "success", True) is False
-
-
-def _send_error(result: Any) -> str:
-    """Error text of a failed ``send()`` result (adapters may omit it)."""
-    return getattr(result, "error", "send returned success=False")
 
 
 def _notice_target_key(platform_value: str, chat_id, thread_id) -> tuple:
@@ -1672,6 +1663,8 @@ class GatewayShutdownMixin(GatewaySessionEndMixin):
         return True
 
     def request_restart(self, *, detached: bool = False, via_service: bool = False) -> bool:
+        if getattr(self, "_owned_gateway_source", None) is not None:
+            return False
         if self._restart_task_started:
             return False
         self._restart_requested = True
@@ -2225,6 +2218,9 @@ class GatewayShutdownMixin(GatewaySessionEndMixin):
         self, *, restart: bool = False, detached_restart: bool = False, service_restart: bool = False
     ) -> None:
         """Stop the gateway and disconnect all adapters."""
+        source = getattr(self, "_owned_gateway_source", None)
+        if source is not None:
+            await source.retain_unknown("shutdown-must-be-owned-by-original-stdin-task")
         from gateway.run import GatewayRunner
         # getattr-guard: shutdown-path tests build bare runners via object.__new__ that lack the
         # liveness-guard machinery.

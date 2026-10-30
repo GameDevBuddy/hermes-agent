@@ -188,6 +188,20 @@ class HostedRoomRuntime:
             room_thread.join(max(0.0, deadline - time.monotonic()))
         return not any(t.is_alive() for t in (thread, *room_threads))
 
+    def stop_owned(self):
+        self._stop.set()
+        self._wake.set()
+        with self._status_lock:
+            thread = self._thread
+        if thread is not None:
+            thread.join()
+        with self._status_lock:
+            rooms = tuple(self._room_threads.values())
+        for worker in rooms:
+            worker.join()
+        if (thread is not None and thread.is_alive()) or any(worker.is_alive() for worker in rooms):
+            raise RuntimeError("hosted room writers remain live")
+
     def wakeup(self) -> None:
         """Wake the worker after task admission or a room-state change."""
         with self._status_lock:

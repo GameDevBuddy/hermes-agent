@@ -306,6 +306,16 @@ class GatewayControlServer:
         self._server = self._pipe_server = None
         self.cleanup_files()
 
+    async def stop_owned(self):
+        if self.ticket_store is not None:
+            self.ticket_store.revoke()
+        if self._server is not None:
+            self._server.close()
+            await self._server.wait_closed()
+        if self._pipe_server is not None:
+            await asyncio.to_thread(self._pipe_server.close_owned)
+        self.cleanup_files()
+
     def cleanup_files(self) -> None:
         """Best-effort removal of socket + pointer files (atexit-safe)."""
         for path in filter(None, (self._bind_path, self._pointer_file)):

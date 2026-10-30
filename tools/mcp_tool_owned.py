@@ -97,6 +97,8 @@ def shutdown_all():
     from tools import mcp_tool as origin
     from tools.mcp_tool_common import _core
     from hermes_owned_gateway import OwnedGatewayUnknown
+    from hermes_owned_gateway import active
+    source = active()
     with _core._lock:
         loop, thread = origin._mcp_loop, origin._mcp_thread
         servers = dict(_core._servers)
@@ -108,7 +110,13 @@ def shutdown_all():
         return
 
     async def settle():
-        await asyncio.gather(*(shutdown_server(server) for server in servers.values()))
+        tasks = []
+        for server in servers.values():
+            context = source.mcp_contexts.get(server)
+            if context is None:
+                raise OwnedGatewayUnknown("original-MCP-constructor-context-missing")
+            tasks.append(context.run(asyncio.create_task, shutdown_server(server)))
+        await asyncio.gather(*tasks)
         others = asyncio.all_tasks() - {asyncio.current_task()}
         if others:
             await asyncio.gather(*others)
@@ -129,3 +137,34 @@ def shutdown_all():
         origin._mcp_loop = origin._mcp_thread = None
     from tools.mcp_tool_config import _close_mcp_stderr_logs
     _close_mcp_stderr_logs(scope=None)
+
+
+async def run_stdio_owned(server, config):
+    from tools.mcp_tool_common import _core
+    from tools import mcp_tool_config as configuration
+    from tools import mcp_tool_registration as registration
+    from tools.mcp_tool_transport import _connect_inputs
+    source = server._owned_source
+    source.require_child_work()
+    if not _core._ensure_mcp_sdk():
+        raise RuntimeError("declared MCP SDK unavailable")
+    inputs, _reason = _connect_inputs(server.name, config)
+    server._resolved_identity = registration._identity_digest(inputs)
+    command, environment, cwd = inputs
+    command, arguments = await _core._preflight_stdio_command(server.name, command, config.get("args", []))
+    parameters = _core.StdioServerParameters(command=command, args=arguments, env=environment or None,
+                                            cwd=cwd, encoding_error_handler="replace")
+    configuration._write_stderr_log_header(server.name)
+    stderr = configuration._StderrTee(configuration._get_mcp_stderr_log())
+    source.stderr_transports.append(stderr)
+    try:
+        async with stdio_client(parameters, errlog=stderr.sink) as (read, write):
+            async with _core.ClientSession(read, write, **server._session_kwargs()) as session:
+                timeout = float(config.get("connect_timeout", _core._DEFAULT_CONNECT_TIMEOUT))
+                return await server._serve_session(session, timeout, mark_lifecycle=True)
+    finally:
+        # The exact stderr sink/reader created above, not an orphan-PID sweep.
+        await asyncio.to_thread(stderr.close, timeout=None)
+        if stderr._reader.is_alive():
+            raise RuntimeError("original-MCP-stderr-reader-still-live")
+        source.stderr_transports.remove(stderr)

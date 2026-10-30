@@ -713,6 +713,10 @@ class GatewayStartupMixin:
 
         See #69089.
         """
+        source = getattr(self, "_owned_gateway_source", None)
+        if source is not None:
+            source.require_bound(self)
+            return
         from gateway.shutdown_watchdog import _arm_loop_floor_timer, start_loop_liveness_watchdog
         config = getattr(self, "config", None)
         if config is not None and not getattr(config, "loop_watchdog", True):

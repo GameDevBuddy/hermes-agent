@@ -337,6 +337,14 @@ class NativeControlServer:
         if any(thread.is_alive() for thread in self._threads):
             raise TimeoutError('runtime control pipe did not stop')
 
+    def close_owned(self):
+        self._stop.set()
+        for thread in self._threads:
+            if thread.ident is not None:
+                thread.join()
+        if any(thread.is_alive() for thread in self._threads):
+            raise RuntimeError("original control worker remains live")
+
     def _create_pipe(self, first=True):
         from gateway.control_socket import windows_pipe_name
         win = _native()

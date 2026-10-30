@@ -40,8 +40,8 @@ def _refuse(reason):
     raise GatewayDescriptionRefused(reason)
 
 class _Observation:
-    __slots__ = ("root", "home", "port", "phase", "error", "files", "directories", "absent",
-                 "io_reserved", "wire", "package", "canonical", "package_info", "canonical_info")
+    __slots__ = ("absent", "canonical", "canonical_info", "directories", "error", "files", "home",
+                 "io_reserved", "package", "package_info", "phase", "port", "root", "wire")
     def __init__(self):
         self.root = self.home = self.port = None
         self.phase, self.error = "claimed", None

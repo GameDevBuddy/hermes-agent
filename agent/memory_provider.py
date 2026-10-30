@@ -167,6 +167,11 @@ class MemoryProvider(ABC):
     def shutdown(self) -> None:
         """Clean shutdown — flush queues, close connections."""
 
+    def shutdown_owned(self):
+        if type(self).shutdown is not MemoryProvider.shutdown:
+            raise RuntimeError("normal memory-provider close not implemented for this provider")
+        self.shutdown()
+
     # -- Optional hooks (override to opt in) ---------------------------------
 
     def on_turn_start(self, turn_number: int, message: str, **kwargs) -> None:
