@@ -328,6 +328,11 @@ class MCPServerTask(MCPServerRunMixin, MCPServerTransportMixin, MCPServerHealthM
         "_lifecycle_started_at",
         "_list_cache_meta",
         "_max_lifetime_seconds",
+        "_owned_shutdown_attempted",
+        "_owned_shutdown_completed",
+        "_owned_shutdown_error",
+        "_owned_shutdown_pending",
+        "_owned_shutdown_task",
         "_owned_source",
         "_park_reason",
         "_pending_call_context",
@@ -361,6 +366,11 @@ class MCPServerTask(MCPServerRunMixin, MCPServerTransportMixin, MCPServerHealthM
 
     def __init__(self, name: str):
         self.name = name
+        self._owned_shutdown_attempted = False
+        self._owned_shutdown_completed = False
+        self._owned_shutdown_error = None
+        self._owned_shutdown_pending = None
+        self._owned_shutdown_task = None
         from hermes_owned_gateway import active
         self._owned_source = active()
         if self._owned_source is not None:
