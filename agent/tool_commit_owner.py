@@ -37,7 +37,8 @@ class PendingToolCommit:
 
     def prepare(self, message, raw_digest):
         if self.native_dispatch_slot is not None or self.native_origin_error is not None:
-            return  # No App-issued native use exists; ordinary row observation is unchanged.
+            from agent.native_sql_writer import prepare_local_message
+            return prepare_local_message(self, message, raw_digest)
         projection = text_digest(message.get("content"))
         if raw_digest is None or projection is None or self.effective_args_digest is None:
             return
@@ -54,6 +55,13 @@ class PendingToolCommit:
     def consume(self, witness):
         if self.receipt is not None or self.message is None:
             return
+        if self.native_dispatch_slot is not None:
+            from agent.native_sql_writer import before_consume, fail_sources
+            try:
+                before_consume(self, witness)
+            except BaseException as error:
+                fail_sources(((0, self, self.message),), error)
+                raise
         parent = witness.get("assistant")
         keys = ("row_id", "message_uid", "row_version", "calls_digest", "call_uids_digest")
         if not isinstance(parent, dict) or any(parent.get(key) != self.assistant[key] for key in keys):
@@ -80,7 +88,15 @@ class PendingToolCommit:
             "observed_in_transaction_at": witness["observed_in_transaction_at"],
             "native_ack_allowed": False, "replay_allowed": False,
         }
-        self.publication_observed = bool(self.owner.publish(self, deepcopy(self.receipt)))
+        from agent.native_sql_writer import publish_observation
+        self.publication_observed = publish_observation(self, deepcopy(self.receipt))
+        if self.native_dispatch_slot is not None:
+            from agent.native_sql_writer import after_consume, fail_sources
+            try:
+                after_consume(self)
+            except BaseException as error:
+                fail_sources(((0, self, self.message),), error)
+                raise
 
 
 class ToolCommitOwner:

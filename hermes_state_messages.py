@@ -450,7 +450,8 @@ class SessionMessagesMixin(SessionDetachedResultsMixin, SessionTodoResultMixin):
             turn_lease_holder=turn_lease_holder, turn_lease_ttl_seconds=turn_lease_ttl_seconds,
             tool_commit_witness_rows=tool_commit_witness_rows,
             tool_commit_source_calls=tool_commit_source_calls),
-            messages, patience_s=self._TRANSCRIPT_WRITE_PATIENCE_S)
+            messages, native_sources=tool_commit_source_calls,
+            patience_s=0 if tool_commit_source_calls else self._TRANSCRIPT_WRITE_PATIENCE_S)
 
     def _append_messages_in_transaction(self, conn, session_id, messages, *,
             compression_lock_holder=None, turn_lease_holder=None, turn_lease_ttl_seconds=300.0,
@@ -481,7 +482,7 @@ class SessionMessagesMixin(SessionDetachedResultsMixin, SessionTodoResultMixin):
 
     _ROW_STATE_KEYS = ("_row_id", DB_ROW_SNAPSHOT, "timestamp")
 
-    def _execute_transcript_write(self, fn, messages: list[dict[str, Any]], **kwargs):
+    def _execute_transcript_write(self, fn, messages: list[dict[str, Any]], *, native_sources=(), **kwargs):
         """``_execute_write(fn)`` for callbacks that stamp row state onto the caller's *messages* (every
         :meth:`_insert_message_rows` caller that passes caller-owned dicts; rewind and import insert fresh copies). Each attempt, and a final failure, restores the caller's
         ``_row_id`` / digest / timestamp: a rolled-back insert's id is reused by SQLite, so a stale stamp
@@ -501,11 +502,29 @@ class SessionMessagesMixin(SessionDetachedResultsMixin, SessionTodoResultMixin):
 
         def _attempt(conn):
             _restore()
-            return fn(conn)
+            try:
+                if native_sources:
+                    from agent.native_sql_writer import begin_original_batch
+                    begin_original_batch(self, native_sources)
+                return fn(conn)
+            except BaseException as error:
+                if native_sources:
+                    from agent.native_sql_writer import fail_sources
+                    from hermes_state_native_book import NativeSQLFailure
+                    fail_sources(native_sources, error)
+                    if isinstance(error, Exception):
+                        raise NativeSQLFailure(getattr(error, "reason", "native_sql_original_body_unknown")) from error
+                raise
         try:
             return self._execute_write(_attempt, **kwargs)
-        except BaseException:
+        except BaseException as error:
             _restore()
+            if native_sources:
+                from agent.native_sql_writer import fail_sources
+                from hermes_state_native_book import NativeSQLFailure
+                fail_sources(native_sources, error)
+                if isinstance(error, Exception):
+                    raise NativeSQLFailure(getattr(error, "reason", "native_sql_original_transaction_unknown")) from error
             raise
 
     def set_latest_matching_message_display_kind(self, session_id: str, *, role: str, content: str,
