@@ -226,6 +226,9 @@ class MemoryManager:
         # within a bound, then report exactly what it abandoned.
         self._background_futures: dict[Future, str] = {}
         self._shutting_down = False
+        self._owned_shutdown_attempted = False
+        self._owned_shutdown_error = None
+        self._owned_shutdown_refs = None
         self._teardown_claim: Optional[str] = None  # see claim_teardown()
         self._shutdown_drain_state: dict[str, Any] = {
             "status": "not_started", "abandoned_writes": 0, "abandoned_prefetches": 0, "active_tasks": 0,
@@ -869,15 +872,38 @@ class MemoryManager:
 
     def shutdown_owned(self):
         with self._sync_executor_lock:
+            if self._owned_shutdown_attempted:
+                raise RuntimeError("normal-memory-shutdown-already-attempted")
+            self._owned_shutdown_attempted = True
+            previously_closing = self._shutting_down
             self._shutting_down = True
             executor = self._sync_executor
             futures = tuple(self._background_futures)
-        if executor is not None:
-            executor.shutdown(wait=True, cancel_futures=False)
-        for future in futures:
-            future.result()
-        for provider in reversed(self._providers):
-            provider.shutdown_owned()
+            providers = tuple(self._providers)
+            self._owned_shutdown_refs = (executor, futures, providers)
+        try:
+            if previously_closing:
+                raise RuntimeError("prior-memory-shutdown-is-not-owned")
+            bound = self._bound_scope or {"hermes_home": self._home_key}
+            if caller_scope(bound, "hook shutdown_owned") is None:
+                raise RuntimeError("normal-memory-shutdown-caller-refused")
+            if executor is not None:
+                executor.shutdown(wait=True, cancel_futures=False)
+            for future in futures:
+                future.result()
+            with self._sync_executor_lock:
+                if self._sync_executor is not executor:
+                    raise RuntimeError("normal-memory-executor-changed")
+                if any(future not in futures for future in self._background_futures):
+                    raise RuntimeError("normal-memory-background-work-changed")
+            for provider in reversed(providers):
+                provider.shutdown_owned()
+            current = tuple(self._providers)
+            if len(current) != len(providers) or any(a is not b for a, b in zip(current, providers, strict=True)):
+                raise RuntimeError("normal-memory-provider-list-changed")
+        except BaseException as error:
+            self._owned_shutdown_error = error
+            raise
 
     def _drain_sync_executor(self) -> None:
         """Give queued FIFO work a bounded chance, then abandon explicitly."""
