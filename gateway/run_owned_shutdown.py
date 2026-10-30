@@ -160,12 +160,20 @@ class ManagedSettlement:
         with self.runner._executor_lock:
             self.runner._executor_closing = True
             pools = [self.runner._executor, self.runner._housekeeping_executor]
-        for pool in pools:
-            if pool is not None:
-                self.resources.append(pool)
-                await asyncio.to_thread(pool.shutdown, wait=True, cancel_futures=False)
-                if any(thread.is_alive() for thread in pool._threads):
-                    raise OwnedGatewayUnknown("canonical-executor-still-has-writers")
+        from agent.shared_pool_close import begin_worker_join, finish_worker_join
+        claim = begin_worker_join(self, pools)
+        try:
+            for pool in pools:
+                if pool is not None:
+                    self.resources.append(pool)
+                    await asyncio.to_thread(pool.shutdown, wait=True, cancel_futures=False)
+                    if any(thread.is_alive() for thread in pool._threads):
+                        raise OwnedGatewayUnknown("canonical-executor-still-has-writers")
+            finish_worker_join(claim)
+        except BaseException as error:
+            if claim is not None:
+                claim["error"] = claim["error"] or error
+            raise
 
     async def finish(self):
         self.require_task()

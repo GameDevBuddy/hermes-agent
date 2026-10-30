@@ -207,8 +207,11 @@ def _shared_transport_cls():
         __slots__ = ("_closed", "_inner")
 
         def __init__(self, inner: Any) -> None:
+            from agent.shared_pool_owned import begin_view, finish_view
+            record = begin_view(self, inner)
             self._inner = inner
             self._closed = False
+            finish_view(record)
 
         @property
         def _pool(self) -> Any:  # httpx-private; socket walkers and tests introspect it
@@ -218,12 +221,15 @@ def _shared_transport_cls():
             if self._closed:
                 raise RuntimeError("Cannot send a request, as the client has been closed.")
             request.extensions[HERMES_TRANSPORT_OWNER_EXT] = id(self)
-            return self._inner.handle_request(request)
+            from agent.shared_pool_owned import handle_view
+            return handle_view(self, request)
 
         def close(self) -> None:
             # Never closes the shared ``_inner``; idle connections are reaped by keepalive_expiry
             # and the pool lives for the process (see ``close_shared_transports``).
-            self._closed = True
+            from agent.shared_pool_owned import close_view
+            if not close_view(self):
+                self._closed = True
 
     _SharedTransportImpl.__name__ = _SharedTransportImpl.__qualname__ = "_SharedTransport"
     _SharedTransport = _SharedTransportImpl
@@ -245,12 +251,15 @@ def _shared_transport_key(base_url: str, verify: Any, proxy: Optional[str]) -> t
 
 
 def _get_shared_transport(key: tuple, build) -> Any:
+    from agent.shared_pool_owned import build_pool, cached_pool
     with _SHARED_TRANSPORTS_LOCK:
         transport = _SHARED_TRANSPORTS.get(key)
         if transport is None:
-            transport = build()
+            transport = build_pool(build)
             if len(_SHARED_TRANSPORTS) < _SHARED_TRANSPORTS_MAX:
                 _SHARED_TRANSPORTS[key] = transport
+        else:
+            cached_pool(transport)
         return transport
 
 
@@ -310,7 +319,8 @@ def build_keepalive_http_client(base_url: str = "", *, async_mode: bool = False,
             )
 
             def _build_direct():
-                transport = transport_cls(verify=verify, limits=direct_limits)
+                from agent.shared_pool_owned import construct_transport
+                transport = construct_transport(transport_cls, verify=verify, limits=direct_limits)
                 # Async transports race natively (anyio happy_eyeballs_delay=0.25).
                 if happy_eyeballs:
                     _enable_happy_eyeballs(transport)

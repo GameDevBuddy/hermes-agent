@@ -136,7 +136,7 @@ def test_cancelled_shutdown_keeps_real_close_task_and_first_diagnostic(monkeypat
     asyncio.run(scenario())
 
 
-def test_shared_pool_view_close_never_counts_as_pool_normal_closure(monkeypatch, tmp_path):
+def test_borrowed_pool_view_cannot_mint_original_pool_ownership(monkeypatch, tmp_path):
     from agent import process_bootstrap
 
     class Pool:
@@ -146,27 +146,15 @@ def test_shared_pool_view_close_never_counts_as_pool_normal_closure(monkeypatch,
         def close(self):
             self.calls += 1
 
-    class ViewHTTP(MockHTTP):
-        def close(self):
-            for view in self._mounts.values():
-                view.close()
-            self.is_closed = True
-
     async def scenario():
-        source, runner = bind_source(monkeypatch, tmp_path)
+        source, _runner = bind_source(monkeypatch, tmp_path)
         monkeypatch.setattr(auxiliary, "_client_cache", {})
-        pool, http = Pool(), ViewHTTP()
-        view = process_bootstrap._shared_transport_cls()(pool)
-        http._mounts = {"https://": view}
+        pool = Pool()
         monkeypatch.setattr(process_bootstrap, "_SHARED_TRANSPORTS", {("fixture",): pool})
-        monkeypatch.setattr(auxiliary, "_load_openai_cls", lambda: MockSDK)
-        client = auxiliary.OpenAI(http_client=http)
-        record = owned.find(client)
-        allow_normal_shutdown(source)
-        with pytest.raises(OwnedGatewayUnknown, match="shared-pool-original-normal-owner"):
-            await shutdown_owned(runner)
-        assert client.is_closed and http.is_closed and pool.calls == 0
-        assert any(item is pool for item in record.shared_refs) and record.client is client
+        with pytest.raises(OwnedGatewayUnknown, match="original-pool-unavailable"):
+            process_bootstrap._shared_transport_cls()(pool)
+        record = source.auxiliary_clients[0]
+        assert record.result[1] is pool and record.client is not None and pool.calls == 0
         assert not source.auxiliary_closed
         first_error = source.error
         with pytest.raises(OwnedGatewayUnknown) as caught:
