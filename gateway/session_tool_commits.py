@@ -67,4 +67,12 @@ def _make_owner(authority, session_id, generation, agent):
                 session_id, generation, "tool.canonical_committed", receipt)
 
     owner = ToolCommitOwner(agent, scope, validate, publish)
+    from functools import partial
+    from agent.native_turn_retention import install_owner_retention
+    from gateway.native_source_calls import capture_original_assistant
+    from gateway.session_native_context import bridge_for_owner
+    install_owner_retention(authority, session_id, generation, owner)
+    owner.native_bridge_factory = partial(bridge_for_owner, authority, session_id, generation, live)
+    owner.native_source_message_factory = partial(
+        capture_original_assistant, authority, session_id, generation, live)
     return owner

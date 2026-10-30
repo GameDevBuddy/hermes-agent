@@ -76,6 +76,8 @@ async def start_managed(source, config=None):
     from gateway.run_startup import recover_left_core_at_gateway_start
     await asyncio.to_thread(recover_left_core_at_gateway_start)
     runner = canonical.GatewayRunner(config)
+    from gateway.native_source_runtime import capture_original_runner
+    capture_original_runner(runner, asyncio.current_task(), asyncio.get_running_loop())
     source.bind_runner(runner)
     settlement = ManagedSettlement(source, runner)
     source.settlement = settlement

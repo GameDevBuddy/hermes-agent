@@ -55,6 +55,13 @@ async def _build_profile_authority(runner, name, home, *, register):
             registry.remove(home)
             raise
     registry.replace(home, authority)
+    from hermes_constants import hermes_home_key
+    from gateway.native_source_runtime import attach_original_authority
+    from hermes_state_runtime import RuntimeStoreError
+    try:
+        attach_original_authority(runner, authority, hermes_home_key(home))
+    except RuntimeStoreError:
+        pass  # Ordinary publication remains; absent custody cannot admit native work.
     return authority
 
 
@@ -150,6 +157,8 @@ async def initialize_gateway_runtime(runner):
     runner.session_runtime_descriptor = descriptor
     registry = SessionAuthorities(homes[0][1], multiplexed=getattr(runner.config, 'multiplex_profiles', False))
     runner.session_authorities = registry
+    from gateway.native_source_runtime import attach_original_registry
+    attach_original_registry(runner, registry)
     for index, (name, home) in enumerate(homes):
         try:
             await _build_profile_authority(runner, name, home, register=index == 0)

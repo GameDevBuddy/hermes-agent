@@ -343,6 +343,9 @@ def _db_flush_write(agent, batch_rows: list[dict[str, Any]], batch_msgs: list[di
     from agent.tool_commit_owner import owner_call
     requested = owner_call(agent, "indices", batch_msgs, default=())
     witness_kwargs = {"tool_commit_witness_rows": requested} if requested else {}
+    sources = owner_call(agent, "writer_sources", batch_msgs, default=())
+    if sources:
+        witness_kwargs["tool_commit_source_calls"] = sources
     agent._session_db.append_messages_batch(
         session_id=agent.session_id, messages=batch_rows,
         compression_lock_holder=getattr(agent, "_active_compression_lock_holder", None),

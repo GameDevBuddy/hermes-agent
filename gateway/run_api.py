@@ -42,6 +42,7 @@ class GatewayAPIHandle:
     task: asyncio.Task
     app: Any
     socket: socket.socket
+    source_owner: Any = None
 
 
 class GatewayDashboardMount:
@@ -247,6 +248,7 @@ async def start_gateway_api(runner, *, host: str = "127.0.0.1", port: int = 0, w
     listener = _listener_socket(family, kind, proto, port,
                                 dual_stack=family == socket.AF_INET6 and address[0] == "::")
     _ACTIVE_RUNNER = runner
+    runtime_api = None
     try:
         listener.bind(address)
         if port:
@@ -259,7 +261,9 @@ async def start_gateway_api(runner, *, host: str = "127.0.0.1", port: int = 0, w
         # Loading the ASGI graph may fail too; it owns the same bound socket.
         if not config.loaded:
             config.load()
-        config.loaded_app = GatewayRuntimeAPI(config.loaded_app, runner, mount)
+        runtime_api = GatewayRuntimeAPI(config.loaded_app, runner, mount,
+                                       source_server=server, source_listener=listener)
+        config.loaded_app = runtime_api
         # A gated listener needs the dashboard's auth providers (and refuses to start without one);
         # an already-imported dashboard costs nothing to mount now; the Webapp serves its page and
         # mints launch links from the start.
@@ -270,6 +274,9 @@ async def start_gateway_api(runner, *, host: str = "127.0.0.1", port: int = 0, w
         if not server.started or server.should_exit:
             raise RuntimeError("gateway API lifespan startup failed")
     except BaseException:
+        if runtime_api is not None:
+            from gateway.native_source_runtime import retire_original_listener
+            retire_original_listener(runtime_api._gdb_original_source_server, request_stop=False)
         listener.close()
         _ACTIVE_RUNNER = None
         await mount.close()
@@ -280,6 +287,8 @@ async def start_gateway_api(runner, *, host: str = "127.0.0.1", port: int = 0, w
         try:
             await server.main_loop()
         finally:
+            from gateway.native_source_runtime import retire_original_listener
+            retire_original_listener(runtime_api._gdb_original_source_server, request_stop=False)
             try:
                 await server.shutdown(sockets=[listener])
             finally:
@@ -290,12 +299,16 @@ async def start_gateway_api(runner, *, host: str = "127.0.0.1", port: int = 0, w
                     _ACTIVE_RUNNER = None
 
     task = asyncio.create_task(serve(), name="gateway-api")
-    return GatewayAPIHandle(
+    handle = GatewayAPIHandle(
         # The address the socket bound, never a name: native clients accept only a numeric loopback
         # origin, and ``localhost`` may resolve to either family.
         api_origin=dial_origin(listener.getsockname()[0], state.bound_port),
         server=server, task=task, app=mount, socket=listener,
+        source_owner=runtime_api._gdb_original_source_server,
     )
+    from gateway.native_source_runtime import attach_original_listener_task
+    attach_original_listener_task(handle.source_owner, handle, task)
+    return handle
 
 
 def warm_gateway_dashboard(runner) -> None:
@@ -319,6 +332,8 @@ def warm_gateway_dashboard(runner) -> None:
 
 async def stop_gateway_api(handle: GatewayAPIHandle) -> None:
     """Drain sockets without stopping the session authority or taking signals."""
+    from gateway.native_source_runtime import retire_original_listener
+    retire_original_listener(handle.source_owner, request_stop=True)
     handle.server.should_exit = True
     # The bootstrap supervisor reports listener failure. Cleanup must still
     # reach adapter/worker settlement when that listener raised or was cancelled.
@@ -351,8 +366,17 @@ class GatewayRuntimeAPI:
     *web_app* is the dashboard mount (or any object whose ``state`` carries the listener's
     ``bound_host`` / ``auth_required`` / ``trusted_public_hosts``).
     """
-    def __init__(self, app, runner, web_app):
+    def __init__(self, app, runner, web_app, *, source_server=None, source_listener=None):
         self.app, self.runner, self.web_app = app, runner, web_app
+        self._gdb_original_source_server = None
+        if source_server is not None and source_listener is not None:
+            from gateway.native_source_runtime import capture_original_server
+            from hermes_state_runtime import RuntimeStoreError
+            try:
+                self._gdb_original_source_server = capture_original_server(
+                    self, runner, web_app, source_server, source_listener)
+            except RuntimeStoreError:
+                pass  # Ordinary listener remains; source custody cannot be supplied.
 
     async def __call__(self, scope, receive, send):
         if scope['type'] != 'websocket' or scope.get('path') != '/api/ws':
@@ -473,6 +497,7 @@ class GatewayRuntimeAPI:
             return
         # The ticket names the served profile; this connection binds to that home's authority.
         scope['hermes.session_authority'] = authority
+        scope['hermes.gdb_original_source_server'] = self._gdb_original_source_server
         from gateway.session_contract import CANONICAL_GATEWAY_PROTOCOL
         from tui_gateway.ws import handle_ws
         from gateway.session_authorities import owner_scope

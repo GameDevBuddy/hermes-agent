@@ -3324,6 +3324,7 @@ def _instantiate_builtin_adapter(platform: Platform, config: Any) -> Optional[Ba
 
 
 from gateway.run_runtime_init import GatewayRuntimeInitMixin
+from gateway.run_status import GatewayRuntimeStatusMixin
 
 
 class GatewayRunner(
@@ -3331,7 +3332,8 @@ class GatewayRunner(
     GatewayVoiceMixin, GatewayAdapterLifecycleMixin, GatewayTopicThreadsMixin, GatewayTurnMixin,
     GatewayShutdownMixin, GatewayBusySessionMixin, GatewayConfigLoadersMixin, GatewayStartupMixin,
     GatewaySessionWatchersMixin, GatewayNotificationsMixin, GatewayInboundMixin, GatewayGoalsMixin,
-    GatewayAgentCacheMixin, GatewayRuntimeInitMixin, GatewayProfileReconcileMixin, GatewayPluginRewireMixin):
+    GatewayAgentCacheMixin, GatewayRuntimeInitMixin, GatewayRuntimeStatusMixin,
+    GatewayProfileReconcileMixin, GatewayPluginRewireMixin):
     """Main gateway controller: manages adapter lifecycles, routes messages to/from the agent."""
 
     def _adapter_for_source(self, source):
@@ -3430,12 +3432,19 @@ class GatewayRunner(
 
     def __init__(self, config: Optional[GatewayConfig] = None):
         global _gateway_runner_ref
+        if ("_gdb_original_source_capture_lock" in self.__dict__
+                or "_gdb_original_source_capture_base_credit" in self.__dict__
+                or "_gdb_original_source_runtime" in self.__dict__):
+            raise RuntimeError("native_original_source_runner_reinitialization_refused")
         # With multiplex_profiles on, load under the default profile secret scope so bot tokens in its
         # .env resolve as secondary profiles' do; explicit config= injection (tests) is left untouched.
         # See #64674.
         # Injected configs keep their mode (including None), except the launching profile's
         # standalone opt-out: --config must not turn that profile into a host multiplexer.
         self.config = config if config is not None else load_gateway_config_for_runner()
+        self._gdb_original_source_capture_lock = threading.RLock()
+        self._gdb_original_source_capture_base_credit = 0
+        self._gdb_original_source_runtime = None
         if config is not None:
             from hermes_cli.gateway_multiplex_mode import standalone_launcher_decision, log_multiplex_decision
             decision = standalone_launcher_decision(self.config)
@@ -3686,33 +3695,6 @@ class GatewayRunner(
             return self._session_key_for_source(source)
         except Exception:
             return None
-
-    def _running_agent_count(self) -> int:
-        return len(self._running_agents)
-
-    def _status_action_label(self) -> str:
-        return "restart" if self._restart_requested else "shutdown"
-
-    def _status_action_gerund(self) -> str:
-        """Localized "restarting" / "shutting down" for the busy/drain notices shown in chat."""
-        return t("gateway.busy.action_restarting") if self._restart_requested else t("gateway.busy.action_shutting_down")
-
-    def _update_runtime_status(self, gateway_state: Optional[str] = None, exit_reason: Optional[str] = None) -> None:
-        if getattr(self, "_startup_cleanup_only", False):
-            return  # cleanup of a start that never ran keeps its startup verdict (startup_failed)
-        # ``active_work`` names each unit only while draining — that is when an observer (``hermes
-        # update``) needs to know WHAT holds the gateway open; a per-turn write would be wasted I/O.
-        active_work = self._describe_active_work() if gateway_state == "draining" else None
-        _write_runtime_status_quiet(
-            gateway_state=gateway_state, exit_reason=exit_reason,
-            restart_requested=self._restart_requested, active_agents=self._active_work_count(),
-            active_work=active_work)
-
-    def _persist_active_agents(self) -> None:
-        """Persist the live in-flight agent count to ``gateway_state.json`` at every turn boundary.
-        Passes ONLY ``active_agents`` so the read-merge-write keeps lifecycle state (gateway_state=None
-        would clobber it). Best-effort: a failed write must never disrupt a turn."""
-        _write_runtime_status_quiet(active_agents=self._active_work_count())
 
     def _running_agent_ids(self) -> set:
         """``id()`` of every agent mid-turn — identity-keyed so the lookup is O(1) and independent of

@@ -126,6 +126,8 @@ async def keyed_turn(table, key, *, queued=None):
 class SessionAuthority:
     def __init__(self, runner, *, profile_id, instance_id, db, epoch):
         self.runner = runner
+        self._gdb_original_source_runtime = None
+        self._gdb_original_source_registry_key = None
         self.profile_id = profile_id
         self.instance_id = instance_id
         self.db = db
@@ -134,6 +136,7 @@ class SessionAuthority:
         self.waiters = {}
         self.events = {}
         self.native_waiters = set()
+        self._native_turn_retention = {}
         self.pending_results = {}
         # Replies of recovered no-waiter turns, sent only once their terminal outcome commits.
         self.pending_deliveries = {}
@@ -183,7 +186,7 @@ class SessionAuthority:
         # reset while that turn's admission is started, so the drain runs it once the turn settles.
         self.deferred_resets = {}
 
-    def authorize(self, actor, ref, capability):
+    def authorize(self, actor, ref, capability, *, restore_if_missing=True):
         """Every handler calls this first, so a later ``self.sessions[ref.session_id]`` is
         safe: a deleted/evicted live entry surfaces here as ``not_found``, not as a KeyError
         deeper in the handler."""
@@ -194,6 +197,8 @@ class SessionAuthority:
         if capability not in actor.capabilities:
             raise RuntimeStoreError('permission_denied')
         if ref.session_id not in self.sessions:
+            if restore_if_missing is not True:
+                raise RuntimeStoreError('not_found')
             row = self.db.get_session(ref.session_id)
             if row is None:
                 raise RuntimeStoreError('not_found')
@@ -1243,9 +1248,14 @@ class SessionAuthority:
             from agent.background_review import cancel_background_review_for_live_turn
             await asyncio.to_thread(cancel_background_review_for_live_turn, live.review)
         try:
+            from agent.native_turn_retention import capture_claim_retention
+            retention = capture_claim_retention(self, ref, live, row)
             try:
                 return await execute_finite_admission(self, ref, row), 'completed'
             finally:
+                await retention.wait_claim_exit()
+                if not retention.ever_native:
+                    self._native_turn_retention.pop((ref.session_id, row['generation']), None)
                 with live.event_stream.lock:
                     self.executing.pop(ref.session_id, None)
         except ManagedExecutionUnknown:
