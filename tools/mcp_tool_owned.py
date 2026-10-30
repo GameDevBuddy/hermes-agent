@@ -79,17 +79,52 @@ async def stdio_client(parameters, errlog):
 
 async def shutdown_server(server):
     """Keep the original task/connection until its own context really finishes."""
-    pending = list(server._pending_refresh_tasks)
-    if pending:
-        await asyncio.shield(asyncio.gather(*pending))
-    server._shutdown_event.set()
-    server._reconnect_event.set()
-    if server._task is not None:
-        await asyncio.shield(server._task)
-    if any(not task.done() or task.cancelled() for task in server._pending_refresh_tasks):
-        raise RuntimeError("MCP refresh work did not finish normally")
-    server._deregister_tools()
-    server.session = None
+    from hermes_owned_gateway import OwnedGatewayUnknown, active
+    if server._owned_shutdown_attempted:
+        raise OwnedGatewayUnknown("owned-MCP-shutdown-already-attempted")
+    server._owned_shutdown_attempted = True
+    source = server._owned_source
+    try:
+        if source is None or active() is not source or server not in source.mcp_contexts:
+            raise OwnedGatewayUnknown("original-MCP-constructor-source-required")
+        pending = list(server._pending_refresh_tasks)
+        server._owned_shutdown_pending = tuple(pending)
+        server._owned_shutdown_task = server._task
+        original = pending + ([server._owned_shutdown_task] if server._owned_shutdown_task is not None else [])
+        if any(task.get_loop() is not asyncio.get_running_loop() for task in original):
+            raise OwnedGatewayUnknown("original-MCP-task-loop-required")
+        if pending:
+            await asyncio.shield(asyncio.gather(*pending))
+        server._shutdown_event.set()
+        server._reconnect_event.set()
+        if server._task is not None:
+            await asyncio.shield(server._task)
+        if any(not task.done() or task.cancelled() for task in server._pending_refresh_tasks):
+            raise RuntimeError("MCP refresh work did not finish normally")
+        server._deregister_tools()
+        server.session = None
+        server._owned_shutdown_completed = True
+    except BaseException as error:
+        server._owned_shutdown_error = error
+        if source is not None:
+            source.unknown(f"normal-MCP-shutdown-incomplete:{error}")
+        raise
+
+
+def require_server_settled(server, source):
+    """Recheck the same locally closed work; never replay a resource callback."""
+    from hermes_owned_gateway import OwnedGatewayUnknown, active
+    if (active() is not source or server._owned_source is not source
+            or server not in source.mcp_contexts or not server._owned_shutdown_attempted
+            or not server._owned_shutdown_completed or server._owned_shutdown_error is not None
+            or server.session is not None or server._task is not server._owned_shutdown_task):
+        raise OwnedGatewayUnknown("completed-MCP-work-changed")
+    pending = server._owned_shutdown_pending
+    if pending is None or any(task not in pending for task in server._pending_refresh_tasks):
+        raise OwnedGatewayUnknown("completed-MCP-refresh-work-changed")
+    original = (*pending, *((server._owned_shutdown_task,) if server._owned_shutdown_task is not None else ()))
+    if any(not task.done() or task.cancelled() or task.exception() is not None for task in original):
+        raise OwnedGatewayUnknown("original-MCP-work-not-normally-finished")
 
 
 def shutdown_all():
@@ -115,8 +150,13 @@ def shutdown_all():
             context = source.mcp_contexts.get(server)
             if context is None:
                 raise OwnedGatewayUnknown("original-MCP-constructor-context-missing")
+            if server._owned_shutdown_completed:
+                require_server_settled(server, source)
+                continue
             tasks.append(context.run(asyncio.create_task, shutdown_server(server)))
         await asyncio.gather(*tasks)
+        for server in servers.values():
+            require_server_settled(server, source)
         others = asyncio.all_tasks() - {asyncio.current_task()}
         if others:
             await asyncio.gather(*others)
