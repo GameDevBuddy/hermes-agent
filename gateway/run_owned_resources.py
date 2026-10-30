@@ -99,6 +99,10 @@ async def close_tool_resources(source):
             from tools.terminal_tool_owned_close import close_all
             if await close_all(source, module, instances):
                 continue
+        else:
+            from tools.browser_owned_close import close_all
+            if await close_all(source, module, instances):
+                continue
         if instances:
             # Existing cleanup paths can kill/replace a browser or environment.
             # They are not used here until a real owned normal closer exists.
@@ -115,6 +119,9 @@ async def close_tool_resources(source):
                 raise OwnedGatewayUnknown("tool-janitor-still-running")
     if "tools.terminal_tool" not in sys.modules and getattr(source, "terminal_records", ()):
         from tools.terminal_tool_owned_close import close_all
+        await close_all(source, None, ())
+    if "tools.browser_session" not in sys.modules and getattr(source, "browser_records", ()):
+        from tools.browser_owned_close import close_all
         await close_all(source, None, ())
 
 

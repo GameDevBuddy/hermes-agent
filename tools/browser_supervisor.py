@@ -25,6 +25,7 @@ from tools.browser_supervisor_dialogs import (
     DialogSupervisionMixin, PendingDialog,
 )
 from tools.browser_supervisor_frames import FrameInfo, FrameTrackingMixin
+from tools.browser_owned import construct as owned_constructor
 
 # ``websockets`` costs ~22 ms at import and is only needed once a supervisor connects.
 if TYPE_CHECKING:
@@ -60,6 +61,11 @@ class _LoopUnavailable(RuntimeError):
 
 def _schedule(coro, loop, *, timeout: float):
     """Run ``coro`` on the supervisor loop from a sync caller and wait for its result."""
+    from tools.browser_owned import find
+    original = find(loop)
+    if original is not None:
+        from tools.browser_owned_cdp import schedule
+        return schedule(original.original_parent, coro, timeout)
     from agent.async_utils import safe_schedule_threadsafe
 
     fut = safe_schedule_threadsafe(coro, loop)
@@ -101,6 +107,7 @@ class CDPSupervisor(DialogSupervisionMixin, FrameTrackingMixin):
     domains and auto-attach. ``snapshot()`` / ``respond_to_dialog()`` / ``evaluate_runtime()``
     are sync, thread-safe bridges onto that loop; all CDP I/O lives on the loop."""
 
+    @owned_constructor("supervisor")
     def __init__(self, task_id: str, cdp_url: str, *, dialog_policy: str = DEFAULT_DIALOG_POLICY,
                  dialog_timeout_s: float = DEFAULT_DIALOG_TIMEOUT_S) -> None:
         if dialog_policy not in _VALID_POLICIES:
@@ -135,6 +142,9 @@ class CDPSupervisor(DialogSupervisionMixin, FrameTrackingMixin):
 
     def start(self, timeout: float = 15.0) -> None:
         """Launch the background loop and block until attachment completes; raises what attach failed with (redacted)."""
+        from tools.browser_owned_supervisor import start
+        if start(self, timeout):
+            return
         if self._thread and self._thread.is_alive():
             return
         self._ready_event.clear()
@@ -153,6 +163,10 @@ class CDPSupervisor(DialogSupervisionMixin, FrameTrackingMixin):
 
     def stop(self, timeout: float = 5.0) -> None:
         """Cancel the supervisor task and join the thread."""
+        from tools.browser_owned import protect, refuse
+        original = protect(self)
+        if original is not None:
+            refuse(original, "browser-supervisor-stop-requires-original-session-normal-closer")
         self._stop_requested = True
         loop = self._loop
         if loop is not None and loop.is_running():
@@ -318,6 +332,10 @@ class CDPSupervisor(DialogSupervisionMixin, FrameTrackingMixin):
 
     def _thread_main(self) -> None:
         """Entry point for the supervisor's dedicated thread."""
+        from tools.browser_owned import find
+        if find(self) is not None:
+            from tools.browser_owned_supervisor import thread_main
+            return thread_main(self)
         loop = asyncio.new_event_loop()
         self._loop = loop
         try:
@@ -349,6 +367,8 @@ class CDPSupervisor(DialogSupervisionMixin, FrameTrackingMixin):
 
     async def _close_ws(self) -> None:
         """Detach and close the current WebSocket, swallowing close errors."""
+        from tools.browser_owned_launcher import forbid_discard
+        forbid_discard(self)
         ws, self._ws = self._ws, None
         if ws is not None:
             with contextlib.suppress(Exception):
@@ -372,6 +392,10 @@ class CDPSupervisor(DialogSupervisionMixin, FrameTrackingMixin):
         socket whenever a short-lived client (a per-call browser_cdp or harness CDP connection)
         disconnects, so on drop we reset per-session ids, re-attach, and keep going.
         A failure before the first successful attach is fatal for ``start()``."""
+        from tools.browser_owned import find
+        if find(self) is not None:
+            from tools.browser_owned_supervisor import run
+            return await run(self)
         reconnect_failures, last_success_at, backoff = 0, 0.0, 0.5
         import websockets  # deferred: only supervisors that connect pay the import
         from agent.proxy_bypass import loopback_connect_kwargs
@@ -451,6 +475,10 @@ class CDPSupervisor(DialogSupervisionMixin, FrameTrackingMixin):
     async def _cdp(self, method: str, params: Optional[dict[str, Any]] = None, *,
                    session_id: Optional[str] = None, timeout: Optional[float] = 10.0) -> dict[str, Any]:
         """Send a CDP command and await its response."""
+        from tools.browser_owned import protect
+        if protect(self) is not None:
+            from tools.browser_owned_cdp import command
+            return await command(self, method, params, session_id, timeout)
         if self._ws is None:
             raise RuntimeError("supervisor WebSocket is not connected")
         call_id, self._next_call_id = self._next_call_id, self._next_call_id + 1
@@ -466,6 +494,10 @@ class CDPSupervisor(DialogSupervisionMixin, FrameTrackingMixin):
 
     async def _read_loop(self) -> None:
         """Continuously dispatch incoming CDP frames (responses → futures, events → handlers)."""
+        from tools.browser_owned import find
+        if find(self) is not None:
+            from tools.browser_owned_supervisor import read
+            return await read(self)
         assert self._ws is not None
         try:
             async for raw in self._ws:
@@ -512,6 +544,10 @@ class _SupervisorRegistry:
 
     def _pop(self, task_id: str) -> Optional[CDPSupervisor]:
         with self._lock:
+            from tools.browser_owned_launcher import forbid_discard
+            original = self._by_task.get(task_id)
+            if original is not None:
+                forbid_discard(original)
             self._home_by_task.pop(task_id, None)
             return self._by_task.pop(task_id, None)
 
@@ -526,6 +562,10 @@ class _SupervisorRegistry:
                      dialog_timeout_s: float = DEFAULT_DIALOG_TIMEOUT_S, start_timeout: float = 15.0) -> CDPSupervisor:
         """Idempotently ensure a supervisor runs for ``(task_id, cdp_url)``; one bound to a
         different ``cdp_url`` or unhealthy (dead thread / stopped loop) is stopped and replaced."""
+        from tools.browser_owned_supervisor import registry_start
+        handled, original = registry_start(self, task_id, cdp_url, dialog_policy, dialog_timeout_s, start_timeout)
+        if handled:
+            return original
         from hermes_constants import hermes_home_key
         home = hermes_home_key()
         with self._lock:
@@ -568,6 +608,9 @@ class _SupervisorRegistry:
         """Stop every running supervisor. For shutdown / test teardown."""
         with self._lock:
             items = list(self._by_task.values())
+            from tools.browser_owned_launcher import forbid_discard
+            for original in items:
+                forbid_discard(original)
             self._by_task.clear()
             self._home_by_task.clear()
         for supervisor in items:

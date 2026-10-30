@@ -74,6 +74,11 @@ class OwnedGatewaySource:
         self.terminal_error = None
         self.terminal_snapshot = None
         self.terminal_closing = self.terminal_closed = False
+        self.browser_records = []
+        self.browser_credit = 0
+        self.browser_error = None
+        self.browser_closing = self.browser_closed = False
+        self.browser_snapshot = None
         self.entry = None
 
     def unknown(self, reason):

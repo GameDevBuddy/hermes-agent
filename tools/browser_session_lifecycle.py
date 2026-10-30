@@ -94,6 +94,8 @@ def _session_owner_scope(cache_key: str):
 
 def _forget_session_tracking(cache_key: str, *, activity: bool = True, session: bool = False) -> None:
     bs = _bs()
+    from tools.browser_owned_close import guard_tracking
+    guard_tracking(bs, cache_key)
     with bs._cleanup_lock:
         if session:
             bs._active_sessions.pop(cache_key, None)
@@ -128,6 +130,9 @@ def _close_cloud_session(session_info: dict[str, Any]) -> None:
 
 def release_session_backend(cache_key: str, session_info: dict[str, Any]) -> None:
     """Release ``session_info``'s browser BY OBJECT (an unpublished session releases through this alone)."""
+    from tools.browser_owned_close import cleanup_session
+    if cleanup_session(_bs(), cache_key, session_info):
+        return
     _close_cloud_session(session_info)
     features = session_info.get("features") or {}
     if features.get("lightpanda"):
@@ -146,6 +151,9 @@ def release_session_backend(cache_key: str, session_info: dict[str, Any]) -> Non
 
 def cleanup_single_session(cache_key: str) -> None:
     """Tear down one session by its exact key."""
+    from tools.browser_owned_close import cleanup_session
+    if cleanup_session(_bs(), cache_key):
+        return
     from tools.browser_session_cdp import stop_cdp_supervisor
     stop_cdp_supervisor(cache_key)  # close our WebSocket BEFORE the backend tears the endpoint down
     bs = _bs()
@@ -205,6 +213,9 @@ def cleanup_all_browsers() -> None:
     """Close every session (gateway shutdown), stop every browser this process launched, reset caches. Each
     session is closed under its owning profile, as the janitor does: a cloud session belongs to that profile's
     provider and credentials."""
+    from tools.browser_owned_close import cleanup_all
+    if cleanup_all(_bs()):
+        return
     bs = _bs()
     with bs._cleanup_lock:
         keys = list(bs._active_sessions)
@@ -238,6 +249,9 @@ def emergency_cleanup_all_sessions() -> None:
     """atexit: close this process's browsers, then reap orphans left by crashed Hermes processes (every
     clean exit sweeps accumulated orphans). Idempotent."""
     bs = _bs()
+    from tools.browser_owned_close import cleanup_all
+    if cleanup_all(bs):
+        return
     if bs._cleanup_done:
         return
     bs._cleanup_done = True
@@ -283,6 +297,8 @@ def _human_holds_shared_browser(cache_key: str) -> bool:
 
 def _force_reap(cache_key: str) -> None:
     """Janitor last resort after repeated failures (#100738): drop the record, release the backend."""
+    from tools.browser_owned_close import guard_tracking
+    guard_tracking(_bs(), cache_key)
     from tools.browser_session_cdp import stop_cdp_supervisor
     stop_cdp_supervisor(cache_key)
     bs = _bs()
@@ -295,12 +311,18 @@ def _force_reap(cache_key: str) -> None:
 
 def _cleanup_one_inactive(cache_key: str, elapsed: int) -> None:
     bs = _bs()
+    from tools.browser_owned_close import cleanup_session
+    if cleanup_session(bs, cache_key):
+        return
     logger.info("Cleaning up inactive session %s (inactive for %ss)", cache_key, elapsed)
     try:
         with _session_owner_scope(cache_key):
             cleanup_single_session(cache_key)
         _forget_session_tracking(cache_key)
     except Exception as e:  # health: allow BLE001 -- counted; force-reaped after MAX_INACTIVITY_CLEANUP_FAILURES
+        from tools.browser_owned import active
+        if active() is not None:
+            raise
         with bs._cleanup_lock:
             failures = bs._cleanup_failures[cache_key] = bs._cleanup_failures.get(cache_key, 0) + 1
         if failures < bs.MAX_INACTIVITY_CLEANUP_FAILURES:
@@ -350,6 +372,9 @@ def _janitor() -> None:
 def start_cleanup_thread() -> None:
     bs = _bs()
     with bs._cleanup_lock:
+        from tools.browser_owned_workers import start_janitor
+        if start_janitor(bs):
+            return
         if bs._cleanup_thread is None or not bs._cleanup_thread.is_alive():
             bs._cleanup_running = True
             # health: allow HX012 -- process-wide janitor: each teardown binds its own session owner scope
@@ -360,6 +385,9 @@ def start_cleanup_thread() -> None:
 
 def stop_cleanup_thread() -> None:
     bs = _bs()
+    from tools.browser_owned_workers import stop_janitor
+    if stop_janitor(bs):
+        return
     bs._cleanup_running = False
     thread = bs._cleanup_thread
     if thread is not None:

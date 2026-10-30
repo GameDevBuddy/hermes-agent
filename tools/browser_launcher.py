@@ -32,6 +32,7 @@ import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable, Optional
+from tools.browser_owned_launcher import launch as owned_launch
 
 logger = logging.getLogger(__name__)
 
@@ -410,9 +411,11 @@ def _start_time(pid: int) -> Optional[int]:
 
 def _make_browser(key: str, port: int, path: str, *, pid, start_time, user_data_dir: str, owned: bool,
                   ephemeral: bool, home_key: str) -> LaunchedBrowser:
-    return LaunchedBrowser(key=key, pid=pid, start_time=start_time, cdp_url=f"ws://127.0.0.1:{port}{path}",
+    browser = LaunchedBrowser(key=key, pid=pid, start_time=start_time, cdp_url=f"ws://127.0.0.1:{port}{path}",
                            http_url=f"http://127.0.0.1:{port}", user_data_dir=user_data_dir, owned=owned,
                            ephemeral=ephemeral, home_key=home_key)
+    from tools.browser_owned_launcher import browser_created
+    return browser_created(browser)
 
 
 def _prepare_dir(user_data_dir: str, ephemeral: bool) -> None:
@@ -427,6 +430,10 @@ def _prepare_dir(user_data_dir: str, ephemeral: bool) -> None:
 
 
 def _spawn(argv: list[str], env: dict, user_data_dir: str) -> subprocess.Popen:
+    from tools.browser_owned import active
+    if active() is not None:
+        from tools.browser_owned_launcher import spawn
+        return spawn(argv, env, user_data_dir)
     log_path = os.path.join(user_data_dir, _LAUNCH_LOG)
     with open(log_path, "wb") as log:
         return subprocess.Popen(argv, stdin=subprocess.DEVNULL, stdout=log, stderr=log, env=env,
@@ -553,6 +560,7 @@ def _start_shared(key: str, executable: str, udd: str, home_key: str, prepare,
     return attached, None
 
 
+@owned_launch
 def launch_chromium(key: str, *, executable: Optional[str] = None, user_data_dir: Optional[str] = None,
                     ephemeral: bool = True, headed: Optional[bool] = None, extra_args=(),
                     env: Optional[dict] = None, timeout: Optional[float] = None, sandbox_bypass: bool = True,
@@ -644,6 +652,8 @@ def _launch_owned(key: str, executable: str, udd: str, *, ephemeral: bool, packa
 
 
 def _abandon_launch(proc: subprocess.Popen, starting: LaunchedBrowser) -> None:
+    from tools.browser_owned_launcher import forbid_discard
+    forbid_discard(proc)
     with _lock:
         _launching.pop(proc.pid, None)
     if proc.poll() is None:  # one that already exited is reaped by poll(); its pid is no longer ours
@@ -669,6 +679,10 @@ def _alive(browser: LaunchedBrowser) -> bool:
 def get_browser(key: str) -> Optional[LaunchedBrowser]:
     """The live browser for ``key``, or None (a dead one is dropped and its leftovers removed)."""
     with _lock:
+        from tools.browser_owned_launcher import lookup
+        handled, original = lookup(_browsers, _procs, key)
+        if handled:
+            return original
         browser = _browsers.get(key)
         if browser is None:
             return None
@@ -715,6 +729,8 @@ def _same_browser(a: LaunchedBrowser, b: LaunchedBrowser) -> bool:
 
 
 def _forget(key: str, browser: LaunchedBrowser, *, drop_record: bool = True) -> None:
+    from tools.browser_owned_launcher import forbid_discard
+    forbid_discard(browser)
     proc = None
     heir = _heir_key(browser)
     if _browsers.get(key) is browser:  # a replacement registered since is not this browser's to drop
@@ -741,6 +757,11 @@ def _forget(key: str, browser: LaunchedBrowser, *, drop_record: bool = True) -> 
 
 def _terminate(pid: Optional[int], start_time: Optional[int], proc: Optional[subprocess.Popen]) -> None:
     """Parent-first teardown (tools/AGENTS.md): SIGTERM the browser alone, then its snapshot survivors."""
+    from tools.browser_owned import unsupported
+    from tools.browser_owned_launcher import forbid_discard
+    if proc is not None:
+        forbid_discard(proc)
+    unsupported("pid-based-browser-termination", proc)
     if not pid:
         return
     from tools.process_registry import ProcessRegistry
@@ -760,6 +781,9 @@ def stop_browser(key: str) -> None:
     stopped only by its LAST holder across Hermes processes (:func:`_last_holder_out`); one a human started is
     never stopped. Holds ``key``'s launch lock: a relaunch of ``key`` waits for this stop instead of
     registering a replacement on the dir it is about to delete."""
+    from tools.browser_owned_close import stop_launcher
+    if stop_launcher(key):
+        return
     with _key_lock(key):
         _stop_locked(key)
 
@@ -790,6 +814,8 @@ def _last_holder_out(record: Path, browser: LaunchedBrowser) -> bool:
     """Drop this process's hold on shared-profile ``browser`` (caller holds the records lock). True when it
     must stop it now: no other live Hermes process holds it, and Hermes launched it (a launch record names
     it). Otherwise a record this process holds, or whose owner is gone, goes to a live holder."""
+    from tools.browser_owned_launcher import forbid_discard
+    forbid_discard(browser)
     from tools import browser_launcher_holders as holders
     holders.drop_lease(record)
     if browser.foreign:  # its pid names nobody here: stopped (or reaped) only from its own environment
@@ -1024,6 +1050,8 @@ def _load_record(path: Path) -> Optional[dict]:
 
 def _reap_record(path: Path, home: Optional[str]) -> bool:
     """Caller holds the records lock."""
+    from tools.browser_owned import unsupported
+    unsupported("orphan-browser-record-adoption", path)
     from tools import browser_launcher_holders as holders
     record = _load_record(path)
     if record is None or not holders.same_namespace(record):  # another namespace's pids name nobody here
