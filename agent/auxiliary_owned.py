@@ -55,6 +55,7 @@ class AuxiliaryConstruction:
         from hermes_constants import get_hermes_home, hermes_home_key
         self.source, self.kind, self.factory = source, kind, factory
         self.primary_owner, self.primary_agent = _primary_scope.get(), None
+        self.normal_parent = None
         self.primary_close_links = None
         self.runner, self.runtime = source.runner, getattr(source.runner, "_gdb_original_source_runtime", None)
         self.creator_loop, self.creator_thread = running_loop(), threading.current_thread()
@@ -83,9 +84,7 @@ class AuxiliaryConstruction:
                     or self.runtime.bootstrap_task is not self.source.task
                     or self.runtime.bootstrap_task.done()
                     or self.source.runner is not self.runner or self.owner_loop is None
-                    or self.owner_loop is not (self.creator_loop or self.source.loop)
-                    or self.owner_thread is not (self.creator_thread if self.creator_loop is not None
-                                                 else self.source.loop_thread)):
+                    or not _original_normal_context(self)):
                 raise OwnedGatewayUnknown("original-auxiliary-runtime-required")
             if creating:
                 self.source.require_child_work()
@@ -96,6 +95,17 @@ class AuxiliaryConstruction:
         except BaseException as error:
             fail(self, error)
             raise
+
+
+def _original_normal_context(record):
+    parent = record.normal_parent
+    if parent is not None:
+        parent.require_current()
+        return (record.kind == "shared-connection" and parent.kind == "shared-pool"
+                and parent.source is record.source and record.owner_loop is parent.owner_loop
+                and record.owner_thread is parent.owner_thread)
+    return (record.owner_loop is (record.creator_loop or record.source.loop)
+            and record.owner_thread is (record.creator_thread if record.creator_loop is not None else record.source.loop_thread))
 
 
 def reserve(kind, factory):
@@ -179,6 +189,9 @@ def attach(record, result, shape):
         record.close_method = getattr(client, "close", None) or getattr(client, "aclose", None)
         record.inner = getattr(client, "_client", None)
         record.shared_refs = _shared_references(record.inner if record.inner is not None else client)
+        if record.shared_refs:
+            from agent.shared_pool_owned import register_holders
+            register_holders(record)
         known = record.kind in ("sdk", "http", "sdk-async", "http-async")
         bound = not record.kind.endswith("-async") or record.creator_loop is not None
         record.supported = known and bound and callable(record.close_method)
@@ -310,6 +323,10 @@ def retain_cache_shutdown():
 def guard_shared_transport_close(transports):
     """Legacy atexit/test teardown cannot clear managed shared-pool custody."""
     from hermes_owned_gateway import _CURRENT
+    for transport in transports:
+        pool = find(transport)
+        if pool is not None and pool.kind == "shared-pool":
+            raise OwnedGatewayUnknown("managed-shared-pool-requires-original-final-closer")
     with _index_lock:
         records = tuple(_client_records.values())
     for record in records:

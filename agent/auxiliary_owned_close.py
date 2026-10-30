@@ -53,6 +53,10 @@ def _require_original_close_owner(record, primary_snapshot=None):
 
 
 async def _normal_on_owner(record):
+    if record.kind == "shared-pool":
+        from agent.shared_pool_close import normal_pool_close
+        await normal_pool_close(record)
+        return
     try:
         _require_original_close_owner(record)
         if _closed(record.client):
@@ -68,17 +72,19 @@ async def _normal_on_owner(record):
         _require_original_close_owner(record, primary_snapshot)
         if not _closed(record.client) or (record.inner is not None and not _closed(record.inner)):
             raise OwnedGatewayUnknown("original-auxiliary-normal-close-unconfirmed")
+        from agent.shared_pool_owned import sdk_views_closed
         if record.shared_refs:
-            # Closing a _SharedTransport view does NOT close its actual process-shared pool.
-            raise OwnedGatewayUnknown("auxiliary-shared-pool-original-normal-owner-unavailable")
+            sdk_views_closed(record)
         with record.source._state_lock:
             if record.error is not None:
                 raise OwnedGatewayUnknown("original-auxiliary-close-remains-unknown")
             for child in record.children:
-                if not _closed(child.client) or child.error is not None or child.shared_refs:
+                if not _closed(child.client) or child.error is not None:
                     raise OwnedGatewayUnknown("original-auxiliary-child-close-unconfirmed")
-                child.phase = "closed"
-            record.phase = "closed"
+                if child.shared_refs:
+                    sdk_views_closed(child)
+                child.phase = "sdk-shared-pending" if child.shared_refs else "closed"
+            record.phase = "sdk-shared-pending" if record.shared_refs else "closed"
     except BaseException as error:
         fail(record, error)
         raise
@@ -110,8 +116,20 @@ def _observe_waiter(record, future):
     record.close_waiter_error = future.exception()
 
 
-async def close_record(record):
+async def close_record(record, *, shared_final=False):
     record.require_current()
+    from agent.shared_pool_owned import KINDS, sdk_views_closed
+    if record.kind in KINDS and not shared_final:
+        return
+    if record.kind == "shared-pool" and record.phase == "closed":
+        from agent.shared_pool_close import require_settled
+        require_settled(record)
+        return
+    if record.phase == "sdk-shared-pending":
+        sdk_views_closed(record)
+        if not _closed(record.client):
+            raise OwnedGatewayUnknown("original-shared-sdk-closed-state-changed")
+        return
     if record.phase == "empty":
         return
     if record.phase == "view":
@@ -170,6 +188,8 @@ async def shutdown_owned(runner):
                 raise OwnedGatewayUnknown("original-auxiliary-construction-hole-retained")
             if record not in children:
                 await close_record(record)
+        from agent.shared_pool_close import close_all
+        await close_all(records)
         for record in records:
             if record.error is not None or record.phase not in ("closed", "view", "empty"):
                 raise OwnedGatewayUnknown("original-auxiliary-resources-remain-held")
