@@ -298,22 +298,23 @@ class OpenAIStreamer(StreamingTTSProvider):
     def stream(self, text: str) -> Iterator[bytes]:
         from openai import OpenAI
         from hermes_cli.config import get_env_value
-        client = OpenAI(
+        from agent.voice_owned import VoiceClient
+        with VoiceClient(OpenAI,
             api_key=(self.section.get("api_key") or resolve_openai_audio_api_key()),
-            base_url=(self.section.get("base_url") or get_env_value("OPENAI_BASE_URL") or None))
-        from tools.tts_tool_openai import _openai_extra_body
-        extra = {"extra_body": body} if (body := _openai_extra_body(self.section)) else {}
-        with client.audio.speech.with_streaming_response.create(
-            model=self.section.get("model", "gpt-4o-mini-tts"), voice=self.section.get("voice", "alloy"),
-            input=text, response_format="pcm", **extra,
-        ) as response:
-            # Runs on the first next(), before any audio is yielded, so consumers reading
-            # ``sample_rate`` after the first chunk open their device at the endpoint's rate.
-            rate = _sample_rate_from_headers(getattr(response, "headers", None))
-            if rate is not None and rate != self.sample_rate:
-                logger.info("TTS endpoint reports %d Hz PCM (expected %d Hz); honoring it", rate, self.sample_rate)
-                self.sample_rate = rate
-            yield from _capped(response.iter_bytes(), "OpenAI streaming TTS")
+            base_url=(self.section.get("base_url") or get_env_value("OPENAI_BASE_URL") or None)) as voice:
+            from tools.tts_tool_openai import _openai_extra_body
+            extra = {"extra_body": body} if (body := _openai_extra_body(self.section)) else {}
+            with voice.speech(
+                model=self.section.get("model", "gpt-4o-mini-tts"), voice=self.section.get("voice", "alloy"),
+                input=text, response_format="pcm", **extra,
+            ) as response:
+                # Runs on the first next(), before any audio is yielded, so consumers reading
+                # ``sample_rate`` after the first chunk open their device at the endpoint's rate.
+                rate = _sample_rate_from_headers(getattr(response, "headers", None))
+                if rate is not None and rate != self.sample_rate:
+                    logger.info("TTS endpoint reports %d Hz PCM (expected %d Hz); honoring it", rate, self.sample_rate)
+                    self.sample_rate = rate
+                yield from voice.retain_stream(_capped(voice.response.stream(), "OpenAI streaming TTS"))
 
 
 @register("gemini")

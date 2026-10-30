@@ -118,6 +118,14 @@ def _observe_waiter(record, future):
 
 async def close_record(record, *, shared_final=False):
     record.require_current()
+    if record.voice_owner is not None:
+        from agent.voice_owned import VoiceClient
+        if type(record.voice_owner) is not VoiceClient or record.voice_owner.record is not record:
+            error = OwnedGatewayUnknown("voice-original-sdk-owner-changed-or-opaque")
+            fail(record, error)
+            raise error
+        record.voice_owner.require_settled()
+        return
     from agent.shared_pool_owned import KINDS, sdk_views_closed
     if record.kind in KINDS and not shared_final:
         return

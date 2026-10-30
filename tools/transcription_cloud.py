@@ -50,18 +50,14 @@ def _with_openai_client(api_key: str, base_url: Optional[str], file_path: str, l
         from tools.transcription_common import DEFAULT_STT_TIMEOUT, _config_number
         from tools.transcription_tools import _load_stt_config
         openai_config = _get_stt_section(_load_stt_config(), "openai")
-        client = OpenAI(
+        from agent.voice_owned import VoiceClient
+        with VoiceClient(OpenAI,
             api_key=api_key,
             base_url=base_url,
             timeout=_config_number(openai_config, "timeout", DEFAULT_STT_TIMEOUT),
             max_retries=_config_number(openai_config, "max_retries", 1, cast=int),
-        )
-        try:
-            return body(client)
-        finally:
-            close = getattr(client, "close", None)
-            if callable(close):
-                close()
+        ) as voice:
+            return voice.invoke(body)
     except Exception as exc:
         try:
             from openai import APIError, APIConnectionError, APITimeoutError
