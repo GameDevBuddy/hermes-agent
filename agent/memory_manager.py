@@ -227,6 +227,7 @@ class MemoryManager:
         self._background_futures: dict[Future, str] = {}
         self._shutting_down = False
         self._owned_shutdown_attempted = False
+        self._owned_shutdown_completed = False
         self._owned_shutdown_error = None
         self._owned_shutdown_refs = None
         self._teardown_claim: Optional[str] = None  # see claim_teardown()
@@ -236,6 +237,8 @@ class MemoryManager:
         # The profile ``initialize_all`` bound the providers to; tool calls must come from it (#140058).
         self._bound_scope: Optional[dict[str, Any]] = None
         self._tool_call_keywords_cache: dict[int, Optional[frozenset[str]]] = {}
+        from hermes_owned_gateway import active
+        self._owned_source = active()
 
     def _each_provider(self, label: str, call: Callable[[MemoryProvider], Any], *, level: int = logging.DEBUG,
                        providers: Optional[list[MemoryProvider]] = None, exc_info: bool = False) -> list[Any]:
@@ -860,6 +863,12 @@ class MemoryManager:
 
     def shutdown_all(self) -> None:
         """Drain the background executor (bounded), then shut providers down in reverse order."""
+        if self._owned_source is not None:
+            if self._owned_shutdown_completed:
+                self.require_owned_settled()
+                return
+            self.shutdown_owned()
+            return
         self._drain_sync_executor()
         self._each_provider("shutdown failed", lambda p: p.shutdown(), level=logging.WARNING,
                             providers=self._providers[::-1])
@@ -882,6 +891,14 @@ class MemoryManager:
             providers = tuple(self._providers)
             self._owned_shutdown_refs = (executor, futures, providers)
         try:
+            source = self._owned_source
+            if source is not None:
+                with source._state_lock:
+                    if not any(value is self for value in source.unresolved_resource_refs):
+                        source.unresolved_resource_refs.append(self)
+                from hermes_owned_gateway import active
+                if active() is not source:
+                    raise RuntimeError("original-memory-source-changed")
             if previously_closing:
                 raise RuntimeError("prior-memory-shutdown-is-not-owned")
             bound = self._bound_scope or {"hermes_home": self._home_key}
@@ -901,9 +918,39 @@ class MemoryManager:
             current = tuple(self._providers)
             if len(current) != len(providers) or any(a is not b for a, b in zip(current, providers, strict=True)):
                 raise RuntimeError("normal-memory-provider-list-changed")
+            self._owned_shutdown_completed = True
+            self.require_owned_settled()
+            if source is not None:
+                with source._state_lock:
+                    source.unresolved_resource_refs[:] = [value for value in source.unresolved_resource_refs
+                                                          if value is not self]
         except BaseException as error:
             self._owned_shutdown_error = error
+            if self._owned_source is not None:
+                self._owned_source.unknown(f"normal-memory-shutdown-incomplete:{error}")
             raise
+
+    def require_owned_settled(self):
+        if (not self._owned_shutdown_completed or self._owned_shutdown_error is not None
+                or self._owned_shutdown_refs is None):
+            raise RuntimeError("normal-memory-shutdown-not-settled")
+        if self._owned_source is not None:
+            from hermes_owned_gateway import active
+            if active() is not self._owned_source:
+                raise RuntimeError("original-memory-source-changed")
+        bound = self._bound_scope or {"hermes_home": self._home_key}
+        if caller_scope(bound, "owned settlement") is None:
+            raise RuntimeError("normal-memory-shutdown-caller-refused")
+        executor, futures, providers = self._owned_shutdown_refs
+        with self._sync_executor_lock:
+            if (self._sync_executor is not executor
+                    or any(future not in futures for future in self._background_futures)):
+                raise RuntimeError("completed-memory-work-changed")
+        current = tuple(self._providers)
+        if len(current) != len(providers) or any(a is not b for a, b in zip(current, providers, strict=True)):
+            raise RuntimeError("completed-memory-provider-list-changed")
+        if any(not future.done() or future.cancelled() or future.exception() is not None for future in futures):
+            raise RuntimeError("original-memory-work-not-finished")
 
     def _drain_sync_executor(self) -> None:
         """Give queued FIFO work a bounded chance, then abandon explicitly."""
