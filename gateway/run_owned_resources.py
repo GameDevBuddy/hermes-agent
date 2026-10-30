@@ -95,6 +95,10 @@ async def close_tool_resources(source):
             continue  # no constructor in that module has run in this interpreter
         with getattr(module, lock_name):
             instances = tuple(getattr(module, registry_name).values())
+        if module_name == "tools.terminal_tool":
+            from tools.terminal_tool_owned_close import close_all
+            if await close_all(source, module, instances):
+                continue
         if instances:
             # Existing cleanup paths can kill/replace a browser or environment.
             # They are not used here until a real owned normal closer exists.
@@ -109,6 +113,9 @@ async def close_tool_resources(source):
             await asyncio.to_thread(thread.join)
             if thread.is_alive():
                 raise OwnedGatewayUnknown("tool-janitor-still-running")
+    if "tools.terminal_tool" not in sys.modules and getattr(source, "terminal_records", ()):
+        from tools.terminal_tool_owned_close import close_all
+        await close_all(source, None, ())
 
 
 async def close_remaining_python_resources(runner, keepalive):

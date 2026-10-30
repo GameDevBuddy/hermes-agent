@@ -94,6 +94,8 @@ def _stamp_gateway_routing(proc_session, get_session_env) -> None:
 
 def _spawn(process_registry, *, env, env_type, command, cwd, effective_task_id, task_id,
            session_key, effective_pty, persist_on_release: bool = False):
+    from tools.terminal_tool_owned import unsupported
+    unsupported("background-process-registry-or-PTY-original-closer-unavailable")
     common = dict(command=command, cwd=cwd, task_id=effective_task_id,
                   owner_task_id=task_id or effective_task_id, session_key=session_key,
                   persist_on_release=persist_on_release)
@@ -164,6 +166,8 @@ def spawn_background_process(
     Never inline-polls ``is_interrupted()``: the spawn detaches and returns
     exit_code 0 immediately, so the stale-interrupt kill cannot occur here.
     """
+    from tools.terminal_tool_owned import unsupported
+    unsupported("background-process-registry-or-PTY-original-closer-unavailable")
     from tools.process_registry import process_registry
     from tools.terminal_tool import (
         _redact_terminal_error_text, _resolve_command_cwd, _resolve_notification_flag_conflict,
@@ -261,6 +265,8 @@ def yield_to_background_handler(
         return None
 
     def _handler(proc, output_so_far: str) -> dict:
+        from tools.terminal_tool_owned import unsupported
+        unsupported("yield-adoption-original-closer-unavailable")
         from tools.process_registry import process_registry
         session = process_registry.adopt_local(
             proc, command=command, cwd=cwd, task_id=effective_task_id,

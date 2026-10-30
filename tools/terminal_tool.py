@@ -628,6 +628,8 @@ def _lookup_active_env(effective_task_id: str, task_id: Optional[str]):
     """
     for key in (effective_task_id, task_id):
         if key and key in _active_environments:
+            from tools.terminal_tool_owned import require_env
+            require_env(_active_environments[key])
             _last_activity[key] = time.time()
             return _active_environments[key]
     return None
@@ -869,6 +871,10 @@ def _start_cleanup_thread():
     """Start the background cleanup thread if not already running."""
     global _cleanup_thread, _cleanup_running
 
+    from tools.terminal_tool_owned_workers import start_janitor
+    if start_janitor(sys.modules[__name__]):
+        return
+
     with _env_lock:
         if _cleanup_thread is None or not _cleanup_thread.is_alive():
             _cleanup_running = True
@@ -879,6 +885,9 @@ def _start_cleanup_thread():
 def _stop_cleanup_thread():
     """Stop the background cleanup thread."""
     global _cleanup_running
+    from tools.terminal_tool_owned import find
+    if find(_cleanup_thread) is not None:
+        return
     _cleanup_running = False
     if _cleanup_thread is not None:
         try:
@@ -1346,6 +1355,9 @@ def _run_foreground(
         except Exception as e:
             # A backend exception (e.g. an SSH connect timeout) never reached an exit status, so it
             # is not a terminal outcome; Hermes' own deadline arrives as ``hermes_timed_out``.
+            from tools.terminal_tool_owned import find
+            if find(env) is not None:
+                raise
             if "timeout" in str(e).lower():
                 return _error_json(f"Command timed out after {effective_timeout} seconds", exit_code=124)
             # Retry on transient errors

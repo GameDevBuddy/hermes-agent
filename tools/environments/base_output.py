@@ -216,6 +216,9 @@ def _pipe_stdin(proc: subprocess.Popen, data: str) -> None:
     ``proc._hermes_stdin_errors`` (surfaced by ``_wait_for_process`` as ``stdin_error``) and
     stdin is still closed in ``finally`` so the child sees EOF instead of hanging.
     """
+    from tools.environments.local_owned_io import pipe_stdin
+    if pipe_stdin(proc, data):
+        return
     errors: list[BaseException] = []
     proc._hermes_stdin_errors = errors
 
@@ -481,6 +484,10 @@ def _start_drain_thread(
         proc: ProcessHandle, output: _BoundedOutputCollector, stop: threading.Event | None = None,
 ) -> threading.Thread:
     """Start the daemon thread running :func:`_drain_stdout`; *stop* ends it early."""
+    from tools.environments.local_owned_io import drain
+    owned_thread = drain(proc, output)
+    if owned_thread is not None:
+        return owned_thread
     thread = threading.Thread(target=_drain_stdout, args=(proc, output, stop), daemon=True)
     thread.start()
     return thread
