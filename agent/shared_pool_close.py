@@ -12,6 +12,7 @@ import threading
 
 from agent import auxiliary_owned as owned
 from agent import shared_pool_owned as shared
+from agent import shared_pool_links as links
 from hermes_owned_gateway import OwnedGatewayUnknown
 
 
@@ -65,6 +66,7 @@ def require_workers(record):
         shared.refuse(record, "shared-pool-original-worker-join-unavailable")
     _validate_join(claim)  # Re-read the actual original executor/thread relationships.
     for request in record.requests:
+        shared.require_parent(request, record)
         request.require_current()
         if request.active or (request.worker not in (threading.current_thread(), record.source.loop_thread)
                               and (request.worker not in claim["threads"] or request.worker.is_alive())):
@@ -80,11 +82,13 @@ def require_workers(record):
 
 
 def require_users(record):
+    links.require_snapshot(record.shared_close_links)
     shared.require_pool(record)
     require_workers(record)
     for view in record.views:
+        shared.require_parent(view, record)
         shared.require_view(view)
-        if not view.view_close_confirmed or not view.client._closed or not view.holders:
+        if not view.view_close_attempted or not view.view_close_confirmed or not view.client._closed or not view.holders:
             shared.refuse(record, "shared-pool-original-view-holder-unsettled")
         for holder in view.holders:
             holder.require_current()
@@ -121,20 +125,24 @@ def require_normal_context(record):
 
 async def normal_pool_close(record):
     try:
+        snapshot = record.shared_close_links
         require_normal_context(record)
         record.original_connections = tuple(record.pool.connections)
-        for item in record.connections:
+        original = next(values for name, values in snapshot.members if name == "connections")
+        for item in original:
             shared.retain_contained(item)
         record.close_result = record.close_method()
         if inspect.isawaitable(record.close_result):
             await record.close_result
         record.normal_api_returned = True
+        links.require_snapshot(snapshot)
         require_normal_context(record)
         if record.pool.connections:
             shared.refuse(record, "shared-pool-original-connections-remain")
-        for item in record.connections:
+        for item in original:
             item.require_current()
-            require_connection_closed(item)
+            require_connection_closed(item, record)
+        links.require_snapshot(snapshot)
         record.phase = "closed"
     except BaseException as error:
         owned.fail(record, error)
@@ -146,10 +154,11 @@ def require_settled(record):
     if not record.close_attempted or not getattr(record, "normal_api_returned", False) or record.pool.connections:
         shared.refuse(record, "shared-pool-original-normal-close-unconfirmed")
     for connection in record.connections:
-        require_connection_closed(connection)
+        require_connection_closed(connection, record)
 
 
-def require_connection_closed(record):
+def require_connection_closed(record, parent):
+    shared.require_parent(record, parent)
     connection = record.client
     if (record.phase not in ("shared-connection-closed", "closed") or record.error is not None
             or connection.close is not record.connection_close_hook
@@ -160,24 +169,38 @@ def require_connection_closed(record):
         shared.refuse(record, "shared-pool-original-connection-close-unconfirmed")
 
 
-async def close_all(records):
+async def close_all(records, snapshots):
     from agent.auxiliary_owned_close import close_record
     pools = tuple(record for record in records if record is not None and record.kind == "shared-pool")
+    if len(pools) != len(snapshots) or any(record is not snapshot.owner for record, snapshot in zip(pools, snapshots)):
+        raise OwnedGatewayUnknown("shared-original-shutdown-pool-membership-changed")
+    for snapshot in snapshots:
+        links.require_snapshot(snapshot)
     for record in pools:
         require_users(record)
     for record in pools:
         await close_record(record, shared_final=True)
+    for snapshot in snapshots:
+        links.require_snapshot(snapshot)
+        require_settled(snapshot.owner)
     for record in records:
         if record is None:
             continue
         if record.kind in shared.KINDS:
-            parent = record if record.kind == "shared-pool" else record.pool_record
+            parent = record if record.kind == "shared-pool" else shared.require_parent(record)
+            links.require_member(record, parent.shared_close_links)
             if parent.phase != "closed" or record.error is not None:
                 shared.refuse(record, "shared-original-pool-remains-unsettled")
-            record.phase = "closed"
+            if record.kind == "shared-connection":
+                require_connection_closed(record, parent)
     for record in records:
         if record is not None and record.phase == "sdk-shared-pending":
             shared.sdk_views_closed(record)
-            if any(owned.find(item).phase != "closed" for item in record.shared_refs):
+            _require_closed_holder(record)
+            if any(owned.find(item).kind not in ("shared-view", "shared-pool") for item in record.shared_refs):
                 shared.refuse(record, "sdk-original-shared-pool-remains-unsettled")
+    for snapshot in snapshots:
+        links.require_snapshot(snapshot)
+    for record in records:
+        if record is not None and (record.kind in shared.KINDS or record.phase == "sdk-shared-pending"):
             record.phase = "closed"
