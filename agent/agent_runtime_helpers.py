@@ -15,6 +15,7 @@ import time
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
+from agent import auxiliary_owned as _sdk_owned, primary_owned as _primary_owned
 from hermes_cli.timeouts import get_provider_request_timeout
 from agent.message_sanitization import (
     _FULL_ARGS_LOG_BOUND, coalesce_tool_call_id, coerce_tool_name, tool_call_id_variants, tool_result_id_variants
@@ -1147,6 +1148,7 @@ def _apply_primary_runtime_fields(agent, rt: dict[str, Any]) -> None:
     agent._client_kwargs = dict(rt["client_kwargs"])
 
 
+@_primary_owned.agent_factory(mutating=True)
 def _build_anthropic_client_from_runtime(agent, rt: dict[str, Any]) -> None:
     """Rebuild the native Anthropic client from a ``_primary_runtime`` snapshot."""
     from agent.anthropic_adapter import build_anthropic_client
@@ -1909,7 +1911,7 @@ def _provider_supplied_client(agent, client_kwargs: dict) -> Any | None:
     if profile is None:
         return None
     try:
-        return profile.create_client(**client_kwargs)
+        return _sdk_owned.construct_during_auxiliary("provider", profile.create_client, **client_kwargs)
     except Exception:
         _ra().logger.warning(
             "Provider profile %r failed to create a client; falling back to the standard client path",
@@ -1973,6 +1975,7 @@ def _gemini_native_client(agent, client_kwargs: dict, httpx_verify, *, reason: s
     return client
 
 
+@_primary_owned.agent_factory
 def create_openai_client(agent, client_kwargs: dict, *, reason: str, shared: bool) -> Any:
     from agent.auxiliary_client import (
         _to_openai_base_url,
@@ -1980,8 +1983,6 @@ def create_openai_client(agent, client_kwargs: dict, *, reason: str, shared: boo
         _validate_proxy_env_urls,
     )
     from agent.ssl_verify import resolve_httpx_verify
-    # Treat client_kwargs as read-only: callers pass agent._client_kwargs, and in-place mutation
-    # leaks into later requests (a torn-down httpx transport got reused).
     # Callers pass agent._client_kwargs (or shallow copies of it) in; any in-place mutation leaks back into
     # the stored dict and is reused on subsequent requests. #10933 hit this by injecting an httpx.Client
     # transport that was torn down after the first request, so the next request wrapped a closed transport
@@ -2065,8 +2066,6 @@ def create_openai_client(agent, client_kwargs: dict, *, reason: str, shared: boo
         keepalive_http = agent._build_keepalive_http_client(client_kwargs.get("base_url", ""), verify=httpx_verify)
         if keepalive_http is not None:
             client_kwargs["http_client"] = keepalive_http
-    # Retries belong to the outer conversation loop (honors Retry-After); SDK retries would
-    # double-retry inside it. auxiliary_client keeps SDK retries as it isn't wrapped.
     # Delegate all rate-limit / 5xx retry to hermes's outer conversation loop, which honors Retry-After and
     # applies adaptive/jittered backoff. The OpenAI SDK default (max_retries=2) uses its own 1-2s backoff
     # that ignores Retry-After and double-retries inside our loop — the same deadlock the Anthropic clients
@@ -2075,8 +2074,7 @@ def create_openai_client(agent, client_kwargs: dict, *, reason: str, shared: boo
     # keeps SDK retries because it is NOT wrapped by the conversation loop.
     client_kwargs.setdefault("max_retries", 0)
     _ensure_route_client_headers(client_kwargs, str(getattr(agent, "provider", "") or ""))
-    # All primary construction and recovery paths must identify Hermes to the official Codex
-    # endpoint, including snapshots with custom header overrides.
+    # Identify Hermes to Codex on every construction/recovery path, including header overrides.
     from agent.codex_headers import apply_required_codex_headers
     apply_required_codex_headers(
         client_kwargs, access_token=client_kwargs.get("api_key", ""),
@@ -2084,7 +2082,7 @@ def create_openai_client(agent, client_kwargs: dict, *, reason: str, shared: boo
     )
     # ``process_bootstrap.OpenAI`` is a lazy SDK proxy; resolved at call time so tests can patch it.
     from agent import process_bootstrap
-    client = process_bootstrap.OpenAI(**client_kwargs)
+    client = _sdk_owned.construct_during_auxiliary("sdk", process_bootstrap.OpenAI, **client_kwargs)
     # Routing proxies name the deployment they served in a response header (#54864).
     from agent.served_model import install_served_model_capture
     install_served_model_capture(agent, client)
@@ -3763,6 +3761,8 @@ def _shutdown_socket(sock: Any) -> None:
 def force_close_tcp_sockets(client: Any) -> int:
     """Abort in-flight TCP I/O on every pool socket via ``_shutdown_socket``. Returns the count
     (logged as ``tcp_force_closed=N``)."""
+    if _sdk_owned.defer_legacy_close(client):
+        return 0
     shutdown_count = 0
     try:
         for sock in _iter_pool_sockets(client):

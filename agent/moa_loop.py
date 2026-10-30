@@ -8,6 +8,7 @@ context before each model iteration.
 from __future__ import annotations
 
 import contextlib
+from agent.primary_owned import agent_factory as _primary_factory
 import functools
 import hashlib
 import json
@@ -1513,6 +1514,7 @@ _RELAY_EVENTS: dict[str, tuple[str, str | None, dict[str, str]]] = {
 }
 
 
+@_primary_factory
 def build_moa_facade(agent, preset_name: Any = None) -> MoAClient:
     """Single construction point for ``MoAClient``: a bare ``MoAClient(preset)`` would
     drop the ``reference_callback`` relay and silence display events for the session.
