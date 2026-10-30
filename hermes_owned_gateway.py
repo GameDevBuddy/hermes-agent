@@ -69,6 +69,11 @@ class OwnedGatewaySource:
         self.auxiliary_error = None
         self.auxiliary_closing_attempted = self.auxiliary_closed = False
         self.mcp_contexts = {}
+        self.terminal_records = []
+        self.terminal_credit = 0
+        self.terminal_error = None
+        self.terminal_snapshot = None
+        self.terminal_closing = self.terminal_closed = False
         self.entry = None
 
     def unknown(self, reason):

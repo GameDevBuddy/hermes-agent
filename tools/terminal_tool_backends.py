@@ -16,6 +16,7 @@ from tools.environments.modal import ModalEnvironment as _ModalEnvironment
 from tools.environments.ssh import SSHEnvironment as _SSHEnvironment
 from tools.managed_tool_gateway import is_managed_tool_gateway_ready
 from tools.terminal_tool_config import _get_plugin_env_provider
+from tools.terminal_tool_owned import environment_factory
 from tools.tool_backend_helpers import (has_direct_modal_credentials, managed_nous_tools_enabled,
                                         nous_tool_gateway_unavailable_message, resolve_modal_backend_state)
 
@@ -271,6 +272,7 @@ _ENV_BUILDERS = {"local": _build_local_env, "docker": _build_docker_env, "modal"
                  "ssh": _build_ssh_env}
 
 
+@environment_factory
 def _create_environment(env_type: str, image: str, cwd: str, timeout: int,
                         ssh_config: dict | None = None, container_config: dict | None = None,
                         local_config: dict | None = None, task_id: str = "default",

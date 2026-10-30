@@ -51,6 +51,9 @@ def _cleanup_env(env: Any, *, force_remove: Optional[bool] = None) -> None:
     Shared by ``cleanup_vm``, the idle reaper and the prompt-time backend probe so
     the signature check lives in one place.
     """
+    from tools.terminal_tool_owned import protect_legacy
+    if protect_legacy(env):
+        return
     if hasattr(env, 'cleanup'):
         if force_remove is not None and "force_remove" in inspect.signature(env.cleanup).parameters:
             env.cleanup(force_remove=force_remove)
@@ -98,6 +101,10 @@ def _unregister_env(task_id: str):
         _last_activity,
     )
     with _env_lock:
+        from tools.terminal_tool_owned import protect_legacy
+        existing = _active_environments.get(task_id)
+        if existing is not None and protect_legacy(existing):
+            return None
         env = _active_environments.pop(task_id, None)
         _last_activity.pop(task_id, None)
     with _creation_locks_lock:
@@ -138,6 +145,12 @@ def _cleanup_inactive_envs(lifetime_seconds: int = 300):
         _active_environments, _calls_in_flight, _creation_locks, _creation_locks_lock, _env_lock,
         _last_activity,
     )
+    from tools.terminal_tool_owned import active, require_env
+    if active() is not None:
+        with _env_lock:
+            for env in _active_environments.values():
+                require_env(env)
+        return  # Managed instances belong to their original canonical source lifetime.
     current_time = time.time()
 
     # Sandboxes with active background processes stay alive (refresh activity).
@@ -157,8 +170,10 @@ def _cleanup_inactive_envs(lifetime_seconds: int = 300):
     # stop them outside it (see _unregister_env for why).
     with _env_lock:
         # A key with a foreground call in flight is busy, however old its stamp.
+        from tools.terminal_tool_owned import protect_legacy
         stale = [t for t, last in list(_last_activity.items())
-                 if current_time - last > lifetime_seconds and t not in _calls_in_flight]
+                 if current_time - last > lifetime_seconds and t not in _calls_in_flight
+                 and not protect_legacy(_active_environments.get(t))]
         envs_to_stop = [(t, _active_environments.pop(t, None)) for t in stale]
         for t in stale:
             _last_activity.pop(t, None)
@@ -186,7 +201,11 @@ def get_active_env(task_id: str):
     from tools.terminal_tool import _active_environments, _env_lock, _resolve_container_task_id
     lookup = _resolve_container_task_id(task_id)
     with _env_lock:
-        return _active_environments.get(lookup) or _active_environments.get(task_id)
+        env = _active_environments.get(lookup) or _active_environments.get(task_id)
+        if env is not None:
+            from tools.terminal_tool_owned import require_env
+            require_env(env)
+        return env
 
 
 def ensure_task_env(task_id: Optional[str] = None):
@@ -324,6 +343,9 @@ def _evict_environment_for_task(task_id: Optional[str]) -> None:
     evicted = []
     with _env_lock:
         for key in keys:
+            from tools.terminal_tool_owned import protect_legacy
+            if key in _active_environments and protect_legacy(_active_environments[key]):
+                continue
             env = _active_environments.pop(key, None)
             _last_activity.pop(key, None)
             if env is not None:

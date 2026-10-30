@@ -20,6 +20,8 @@ from pathlib import Path
 from typing import Callable, Iterable
 
 from hermes_constants import get_hermes_home
+from tools import terminal_tool_owned as _owned_terminal
+from tools.environments.local_owned_io import wait_on_owner
 from tools.interrupt import consume_yield, is_interrupted, is_thread_interrupted
 from tools.environments.base_output import (
     ProcessHandle, _finalize_wait_result, _new_output_collector, _start_drain_thread,
@@ -101,6 +103,7 @@ def kill_live_foreground_processes(*, now: bool = False) -> int:
     around the snapshot survives, and it never blocks past ``_HARD_KILL_BUDGET_S``: SDK cancels
     (Modal, Daytona, Vercel) run on daemon threads under that one deadline."""
     global _exit_fenced
+    _owned_terminal.guard_global_force(_live_foreground, _live_foreground_cond)
     if not now:
         with _live_foreground_cond:
             live = list(_live_foreground.values())
@@ -427,6 +430,8 @@ class BaseEnvironment(ABC):
             self._update_cwd(result)
             logger.info("Session snapshot created (session=%s, cwd=%s)", self._session_id, self.cwd)
         except Exception as exc:
+            from tools.environments.local_owned import init_failure
+            init_failure(self, exc)
             self._snapshot_ready = False
             self._prefer_nonlogin, detail = self._probe_nonlogin_fallback(str(exc))
             if self._prefer_nonlogin:
@@ -505,6 +510,7 @@ class BaseEnvironment(ABC):
         return f"exec 0< {quoted} || exit $?\nrm -f -- {quoted} || exit $?\n{command}"
 
     # --- Process lifecycle ---
+    @wait_on_owner
     def _wait_for_process(
         self, proc: ProcessHandle, timeout: int = 120, *,
         bounded_capture: bool = False, watch_interrupt_tid: int | None = None,
@@ -666,6 +672,7 @@ class BaseEnvironment(ABC):
         self._recreated_notice_pending = True
 
     # --- Unified execute() ---
+    @_owned_terminal.execute
     def execute(
         self,
         command: str,
@@ -767,6 +774,8 @@ class BaseEnvironment(ABC):
             raise
 
         if bounded.timed_out:
+            from tools.environments.local_owned import foreground_timeout
+            foreground_timeout(self)
             suffix = f"\n[Command timed out after {effective_timeout}s]"
             if output_holder:
                 collector = output_holder[0]
@@ -784,6 +793,7 @@ class BaseEnvironment(ABC):
 
     def _kill_spawned_tree(self, spawned) -> None:
         """Best-effort kill of a wedged spawned process and its tree (backstop path)."""
+        _owned_terminal.prevent_force(self, spawned)
         try:
             self._kill_process(spawned)
         except Exception:

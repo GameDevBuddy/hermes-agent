@@ -333,7 +333,9 @@ def run_bounded_sync(
         finally:
             done.set()
 
-    threading.Thread(target=_worker, name=f"deadline-{label}", daemon=True).start()
+    from tools.terminal_tool_owned_workers import start_deadline
+    if not start_deadline(_worker, name=f"deadline-{label}", done=done, box=box):
+        threading.Thread(target=_worker, name=f"deadline-{label}", daemon=True).start()
     deadline = start + timeout_s
     while not done.is_set():
         remaining = deadline - time.monotonic()

@@ -19,6 +19,7 @@ from pathlib import Path
 from hermes_constants import get_process_hermes_home
 from tools.environments.base import BaseEnvironment
 from tools.environments.base_output import _pipe_stdin
+from tools import terminal_tool_owned as _owned_terminal
 from hermes_cli._subprocess_compat import windows_hide_flags
 from tools.environments.local_env_policy import (
     _ALWAYS_STRIP_FOLDED, _ALWAYS_STRIP_KEYS, _HERMES_PROVIDER_ENV_BLOCKLIST, _HERMES_PROVIDER_ENV_FORCE_PREFIX,
@@ -1027,6 +1028,7 @@ class LocalEnvironment(BaseEnvironment):
             name for name in merged
             if isinstance(name, str) and _matches_terminal_first_party_prefix(name)))
 
+    @_owned_terminal.local_initializer
     def __init__(self, cwd: str = "", timeout: int = 60, env: dict | None = None, persistent: bool = True):
         super().__init__(cwd=_resolve_local_initial_cwd(cwd), timeout=timeout, env=env, persist_env=persistent)
         self.init_session()
@@ -1106,13 +1108,14 @@ class LocalEnvironment(BaseEnvironment):
             cmd_string = _prepend_shell_init(cmd_string, _resolve_shell_init_files())
         args = [bash, *(["-l"] if login else []), "-c", cmd_string]
         self._recover_cwd()
-        proc = subprocess.Popen(
+        from tools.environments.local_owned import popen
+        proc = popen(self, subprocess.Popen,
             args, text=True, env=_make_run_env(self.env), encoding="utf-8", errors="replace",
             stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
             stdin=subprocess.PIPE if stdin_data is not None else subprocess.DEVNULL,
             start_new_session=True, cwd=self.cwd,
             **({"creationflags": windows_hide_flags()} if _IS_WINDOWS else {}))
-        if not _IS_WINDOWS:
+        if not _IS_WINDOWS and _owned_terminal.find(proc) is None:
             with contextlib.suppress(ProcessLookupError):
                 proc._hermes_pgid = os.getpgid(proc.pid)
                 # Record the group leader's start-time fingerprint so _kill_process can
@@ -1127,6 +1130,7 @@ class LocalEnvironment(BaseEnvironment):
 
     def _kill_process(self, proc):
         """Kill the entire process group (all children)."""
+        _owned_terminal.prevent_force(self, proc)
         try:
             (_kill_process_windows if _IS_WINDOWS else _kill_process_group_posix)(proc)
         except OSError:  # ProcessLookupError / PermissionError included
@@ -1135,6 +1139,7 @@ class LocalEnvironment(BaseEnvironment):
 
     def _force_kill_process(self, proc):
         """SIGKILL the whole group with no TERM grace or wait: the caller os._exit()s next."""
+        _owned_terminal.prevent_force(self, proc)
         if _IS_WINDOWS:  # already a forced tree kill
             return self._kill_process(proc)
         with contextlib.suppress(OSError):
@@ -1168,6 +1173,9 @@ class LocalEnvironment(BaseEnvironment):
     def cleanup(self):
         """Clean up temp files, including orphaned atomic-write snapshots
         (``snap.tmp.<bashpid>``) a failed/interrupted mv could leave behind."""
+        from tools.environments.local_owned import cleanup_guard
+        if cleanup_guard(self):
+            return
         # See #38249.
         import glob
         try:
