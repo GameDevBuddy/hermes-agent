@@ -212,14 +212,13 @@ class DialogSupervisionMixin:
         if auto is not None:
             with self._state_lock:
                 self._archive_dialog_locked(dialog, "auto_policy")
-            asyncio.create_task(self._respond_quiet(dialog, accept=auto[0], prompt_text=auto[1]))
+            from tools.browser_owned_events import spawn
+            spawn(self, self._respond_quiet, dialog, accept=auto[0], prompt_text=auto[1])
             return
         with self._state_lock:
             self._pending_dialogs[dialog.id] = dialog
-        self._dialog_watchdogs[dialog.id] = asyncio.get_running_loop().call_later(
-            self.dialog_timeout_s,
-            lambda: asyncio.create_task(self._dialog_timeout_expired(dialog.id)),
-        )
+        from tools.browser_owned_events import timer
+        self._dialog_watchdogs[dialog.id] = timer(self, self.dialog_timeout_s, self._dialog_timeout_expired, dialog.id)
 
     # ── Responding ───────────────────────────────────────────────────────────
 
@@ -281,7 +280,8 @@ class DialogSupervisionMixin:
                 self._archive_dialog_locked(dialog, closed_by)
         handle = self._dialog_watchdogs.pop(dialog_id, None)
         if handle is not None:
-            handle.cancel()
+            from tools.browser_owned_events import cancel
+            cancel(handle)
 
     def _archive_dialog_locked(self, dialog: PendingDialog, closed_by: str) -> None:
         """Move a pending dialog to the recent_dialogs ring buffer. Must hold state_lock."""

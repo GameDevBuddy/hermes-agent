@@ -19,6 +19,7 @@ import math
 import threading
 import time
 from typing import TYPE_CHECKING, Any, Callable, Optional
+from tools.browser_owned import construct as owned_constructor
 
 if TYPE_CHECKING:
     from tools.browser_supervisor import CDPSupervisor, _SupervisorRegistry
@@ -31,6 +32,7 @@ class CapturedCDPInvalid(RuntimeError):
 class CapturedCDP:
     """A CDP channel pinned to one supervisor connection. Build via ``SUPERVISOR_REGISTRY.capture``."""
 
+    @owned_constructor("capture")
     def __init__(self, supervisor: CDPSupervisor, registry: _SupervisorRegistry) -> None:
         # Runs on the supervisor loop (see ``capture``) so ws and session id are one snapshot.
         self._supervisor = supervisor
@@ -42,9 +44,16 @@ class CapturedCDP:
         # The default page session at capture time. A later ``focus_page`` on the supervisor
         # does not change it: calls with this id keep reaching the page captured here.
         self.page_session_id: str = supervisor._page_session_id or ""
+        from tools.browser_owned_capture import created
+        created(self)
 
     def is_valid(self) -> bool:
         """True while the captured connection is still the supervisor's live one."""
+        from tools.browser_owned import find
+        original = find(self)
+        if original is not None:
+            from tools.browser_owned_capture import require_capture
+            require_capture(original)
         sup = self._supervisor
         return (self._registry.get(self.task_id) is sup and sup._active and not sup._stop_requested
                 and sup._ws is self._ws and self._loop.is_running())
@@ -74,7 +83,14 @@ class CapturedCDP:
             raise self._invalid()
         try:
             return await self._supervisor._cdp(method, params, session_id=session_id, timeout=timeout)
-        except Exception:
+        except Exception as error:
+            # A managed IO failure already poisons the original owner. Preserve that
+            # exact exception instead of replacing it by a later validity-check error.
+            from tools.browser_owned import find, fail
+            original = find(self)
+            if original is not None:
+                fail(original, error)
+                raise
             # A reply lost to a dropped socket (timeout, ConnectionError, ConnectionClosed)
             # surfaces as invalidation; a CDP error on a live connection passes through.
             if not self.is_valid():
@@ -111,6 +127,10 @@ class CapturedCDP:
                 raise ValueError("Captured CDP timeout must be positive and finite, or None")
         if before_send is not None and not callable(before_send):
             raise TypeError("before_send must be callable")
+        from tools.browser_owned_capture import call
+        handled, original_result = call(self, method, params, session_id, timeout, before_send)
+        if handled:
+            return original_result
         deadline = None if timeout is None else time.monotonic() + timeout
         try:
             running = asyncio.get_running_loop()

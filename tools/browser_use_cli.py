@@ -25,6 +25,7 @@ from typing import Any, Callable, Dict, List, NamedTuple, Optional
 
 from hermes_constants import get_hermes_home, hermes_home_key
 from tools.browser_harness_dirs import daemon_env, daemon_identity, namespace_harness_dirs
+from tools.browser_owned_commands import entry as owned_browser_command
 from utils import is_truthy_value
 
 logger = logging.getLogger(__name__)
@@ -563,6 +564,8 @@ _POST_KILL_DRAIN_S = 10.0
 def _kill_cli_process_group(proc) -> None:
     """SIGKILL the CLI's whole process group (POSIX; ``start_new_session`` made pgid == pid) or,
     on Windows, its process tree via ``taskkill /T /F`` — the only group-wide kill it offers."""
+    from tools.browser_owned_launcher import forbid_discard
+    forbid_discard(proc)
     if os.name == "nt":
         from hermes_cli._subprocess_compat import windows_hide_flags
         with contextlib.suppress(OSError, subprocess.SubprocessError):
@@ -582,6 +585,10 @@ def _run_cli_killing_process_group(cmd, code, env, timeout):
     still holding them, and on Windows ``run()``'s unbounded post-kill ``communicate()`` then
     blocks on pipe EOF forever — so the tool call, plus its activity heartbeat, wedges (#106244).
     """
+    from tools.browser_owned import active
+    if active() is not None:
+        from tools.browser_owned_commands import helper
+        return helper(cmd, code, env, timeout)
     proc = subprocess.Popen(
         cmd, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
         text=True, encoding="utf-8", errors="replace", env=env, **_group_popen_kwargs(),
@@ -674,6 +681,7 @@ def _take_real_profile_note(route_key: str) -> dict:
     return {"real_profile_unavailable": _real_profile_fallback[route_key]}
 
 
+@owned_browser_command
 def browser_exec(code: str, session: str = "", timeout_s: int = _DEFAULT_TIMEOUT_S,
                  task_id: Optional[str] = None, local: bool = False):
     """Run Python code through the browser-use CLI, and return its output"""
@@ -736,6 +744,8 @@ def browser_exec(code: str, session: str = "", timeout_s: int = _DEFAULT_TIMEOUT
         _attach_vault_supervisor(env, task_id)
         with _driven_daemons_lock:
             daemon = daemon_identity(env)
+            from tools.browser_owned_commands import daemon_guard
+            daemon_guard(daemon, env)
             _driven_daemons[daemon] = hermes_home_key()
         try:
             return {"proc": _run_cli_killing_process_group(cmd, code, env, timeout)}

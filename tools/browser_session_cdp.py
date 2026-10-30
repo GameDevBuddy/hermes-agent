@@ -28,6 +28,8 @@ def resolve_cdp_override(cdp_url: str) -> str:
     ``ws://host:port`` resolve via ``/json/version`` → ``webSocketDebuggerUrl`` (falls back to the raw value).
     """
     raw = (cdp_url or "").strip()
+    from tools.browser_owned_session import endpoint_guard
+    endpoint_guard(raw)
     if not raw:
         return ""
     lowered = raw.lower()
@@ -147,6 +149,9 @@ def ensure_cdp_supervisor(task_id: str) -> None:
         SUPERVISOR_REGISTRY.get_or_start(task_id=task_id, cdp_url=cdp_url, dialog_policy=policy,
                                          dialog_timeout_s=timeout_s)
     except Exception as exc:  # health: allow BLE001 -- a failed supervisor attach must not break the session
+        from tools.browser_owned import active
+        if active() is not None:
+            raise
         logger.debug("CDP supervisor attach for task=%s failed (non-fatal): %s", task_id, exc)
 
 
@@ -156,4 +161,7 @@ def stop_cdp_supervisor(task_id: str) -> None:
         from tools.browser_supervisor import SUPERVISOR_REGISTRY
         SUPERVISOR_REGISTRY.stop(task_id)
     except Exception as exc:  # health: allow BLE001 -- teardown must never abort on a supervisor error
+        from tools.browser_owned import active
+        if active() is not None:
+            raise
         logger.debug("CDP supervisor stop for task=%s failed (non-fatal): %s", task_id, exc)

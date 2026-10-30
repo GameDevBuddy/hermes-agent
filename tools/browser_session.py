@@ -21,6 +21,7 @@ from typing import Any, Callable, Optional
 from hermes_cli.config import DEFAULT_CONFIG
 from hermes_constants import hermes_home_key
 from utils import env_int
+from tools.browser_owned_session import session as owned_session
 
 logger = logging.getLogger(__name__)
 
@@ -119,6 +120,8 @@ def ensure_screen_for_headed_chromium() -> None:
     profile gets its screen first. Headless browsing and Lightpanda never bring one up."""
     from tools.browser_session_cloud import is_headed_mode
     if is_headed_mode():
+        from tools.browser_owned_session import creator_guard
+        creator_guard("headed-screen-factory")
         from tools.bot_desktop.runtime import ensure_started_for_tool
         ensure_started_for_tool()
 
@@ -195,6 +198,8 @@ def _create_chromium_session(cache_key: str) -> dict[str, Any]:
     except RuntimeError as exc:
         raise RuntimeError(f"The browser cannot run here: {exc}") from exc
     if where == placement.TERMINAL:
+        from tools.browser_owned_session import creator_guard
+        creator_guard("sandbox-browser")
         from tools.browser_session_sandbox import create_sandbox_session
         return create_sandbox_session(cache_key)
     from tools.browser_launcher import launch_chromium
@@ -210,6 +215,8 @@ def _create_chromium_session(cache_key: str) -> dict[str, Any]:
 
 
 def _create_lightpanda_session(cache_key: str) -> dict[str, Any]:
+    from tools.browser_owned_session import creator_guard
+    creator_guard("lightpanda-process")
     from tools.browser_lightpanda import launch_lightpanda
     from tools.browser_session_cloud import is_local_backend
     info = _session_record("lp", None, {"local": True, "lightpanda": True})
@@ -227,6 +234,11 @@ def _create_local_session(cache_key: str, allow_real_profile: bool = True) -> di
     is signed out. The hybrid sidecar passes ``allow_real_profile=False``: the user's cookie jar must not
     reach an arbitrary internal host the model chose."""
     fallback_note = None
+    from tools.browser_owned import active
+    if active() is not None:
+        from tools.browser_owned_session import backend_guard
+        backend_guard(True)
+        allow_real_profile = False  # consented/shared graphs above were refused before their factory
     if allow_real_profile:
         from tools.browser_session_real_profile import real_profile_cdp, real_profile_fallback_note, real_profile_key
         cdp_url, err = real_profile_cdp()
@@ -248,6 +260,8 @@ def _create_local_session(cache_key: str, allow_real_profile: bool = True) -> di
 def _create_cloud_session_or_fallback(cache_key: str, provider) -> dict[str, Any]:
     """Cloud session; on failure (429, quota, outage) a LOCAL launcher session marked ``fallback_from_cloud``.
     ``cdp_url`` is resolved here because some providers return an HTTP discovery URL."""
+    from tools.browser_owned import unsupported
+    unsupported("cloud-provider-session", provider)
     from tools.browser_session_cdp import resolve_cdp_override
     try:
         session_info = provider.create_session(cache_key)
@@ -271,6 +285,8 @@ def _create_cloud_session_or_fallback(cache_key: str, provider) -> dict[str, Any
 
 def _create_session_for_key(cache_key: str, force_local: bool) -> dict[str, Any]:
     """Fresh session (runs OUTSIDE the lock: cloud mode makes a network call, a launch takes seconds)."""
+    from tools.browser_owned_session import backend_guard
+    backend_guard(force_local)
     from tools.browser_session_cdp import get_cdp_override
     from tools.browser_session_cloud import get_cloud_provider
     override = get_cdp_override()
@@ -328,10 +344,13 @@ def _publish(cache_key: str, session_info: dict[str, Any], home_key: str) -> dic
     session_info.setdefault("session_key", cache_key)
     session_info.setdefault("owner_task_id", owner_task_id(cache_key))
     session_info.setdefault("home_key", home_key)  # the profile reaped on /browser connect
+    from tools.browser_owned_session import published
+    published(session_info)
     _active_sessions[cache_key] = session_info
     return session_info
 
 
+@owned_session
 def get_session_info(cache_key: Optional[str] = None) -> dict[str, Any]:
     """Get or create the session for ``cache_key`` (thread-safe); starts the inactivity janitor and touches
     activity. A ``::local`` key forces a local browser even with a cloud provider configured."""
