@@ -580,6 +580,10 @@ class SessionDB(
             logger.warning("%s close failed for %s: %s", label, self.db_path, exc)
 
     def __init__(self, db_path: Path | None = None, read_only: bool = False):
+        if getattr(self, "_native_pin_init_consumed", False):
+            raise RuntimeError("native_sql_original_database_reinitialization_refused")
+        self._native_pin_book = self._native_pin_init_error = None
+        self._native_pin_init_consumed = self._native_pin_closing = False
         self.db_path = db_path or _default_db_path()
         _ensure_test_isolation(self.db_path)  # before any connection/pragma/mkdir
         self.read_only = read_only
@@ -1531,6 +1535,10 @@ class SessionDB(
         that other callers in the same process are still using — while still letting legacy ``close()`` call
         sites return their reference instead of leaking it.
         """
+        from hermes_state_native_book import require_no_local_native_hold
+        with self._lock:
+            require_no_local_native_hold(self)
+            self._native_pin_closing = True
         if self._shared_registry_owned:
             from hermes_state_registry import release
             release(self)

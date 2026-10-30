@@ -22,7 +22,7 @@ _POLL_S = 0.25
 
 
 class _Pending:
-    __slots__ = ("event", "events", "locked", "method", "native_pair_credit", "native_phase",
+    __slots__ = ("event", "events", "locked", "method", "native_active_use", "native_pair_credit", "native_phase",
                  "native_slot", "params", "qids", "replay", "result", "session_id", "value")
 
     def __init__(self, session_id, qids=None, events=None, method=None, params=None, replay=True):
@@ -42,6 +42,7 @@ class _Pending:
         self.qids = tuple(qids) if qids else None
         self.locked = {}
         self.native_slot = None
+        self.native_active_use = None
         self.native_phase = None
         self.native_pair_credit = 0
 
@@ -109,6 +110,20 @@ def register_native_request(slot):
     """Retain the one actual candidate; absent App issuance never sends a frame."""
     from agent.native_original_use import _acquire_original_native_use
     from hermes_state_runtime import RuntimeStoreError
+    request = retain_native_candidate(slot)
+    try:
+        _acquire_original_native_use(slot, request)
+        from gateway.native_source_stop import require_native_pin_for_invoke
+        require_native_pin_for_invoke(slot._native_pin)
+    except BaseException:
+        request.native_phase = "blocked"
+        raise  # Candidate, pair credit, source/slot/keeper and original request stay held.
+    raise RuntimeStoreError("native_original_app_request_transport_missing")
+
+
+def retain_native_candidate(slot):
+    """Construct and retain the actual original candidate; never publish or authorize it."""
+    from hermes_state_runtime import RuntimeStoreError
     source = slot._source_declaration_refs
     if source is None:
         raise RuntimeStoreError("native_original_declaration_missing")
@@ -122,14 +137,8 @@ def register_native_request(slot):
         request.native_slot, request.native_phase, request.native_pair_credit = slot, "invoke", 2
         slot._native_request_object = request
         _open[candidate] = request
-    try:
-        _acquire_original_native_use(slot, request)
-        from gateway.native_source_stop import require_native_pin_for_invoke
-        require_native_pin_for_invoke(slot._native_pin)
-    except BaseException:
-        request.native_phase = "blocked"
-        raise  # Candidate, pair credit, source/slot/keeper and original request stay held.
-    raise RuntimeStoreError("native_original_app_request_transport_missing")
+    source.original_source_call.attach_request(slot, request)
+    return request
 
 
 def ask_viewer(events, session_id, method, params, *, cancelled=lambda: False, timeout=REQUEST_TIMEOUT_S,

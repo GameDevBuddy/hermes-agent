@@ -344,17 +344,39 @@ def _db_flush_write(agent, batch_rows: list[dict[str, Any]], batch_msgs: list[di
     requested = owner_call(agent, "indices", batch_msgs, default=())
     witness_kwargs = {"tool_commit_witness_rows": requested} if requested else {}
     sources = owner_call(agent, "writer_sources", batch_msgs, default=())
+    from agent.native_sql_writer import retained_writer_sources
+    retained = retained_writer_sources(agent, batch_msgs)
+    if retained:
+        sources = retained
     if sources:
         witness_kwargs["tool_commit_source_calls"] = sources
-    agent._session_db.append_messages_batch(
-        session_id=agent.session_id, messages=batch_rows,
-        compression_lock_holder=getattr(agent, "_active_compression_lock_holder", None),
-        turn_lease_holder=getattr(agent, "_active_session_turn_lease_holder", None),
-        turn_lease_ttl_seconds=getattr(agent, "_active_session_turn_lease_ttl_seconds", 300.0) or 300.0,
-        **witness_kwargs,
-    )
-    sync_flushed_message_markers(batch_msgs, batch_rows)
-    owner_call(agent, "consume", batch_msgs, batch_rows)
+    try:
+        if sources:
+            from agent.native_sql_writer import preflight_original_batch
+            preflight_original_batch(sources)
+        agent._session_db.append_messages_batch(
+            session_id=agent.session_id, messages=batch_rows,
+            compression_lock_holder=getattr(agent, "_active_compression_lock_holder", None),
+            turn_lease_holder=getattr(agent, "_active_session_turn_lease_holder", None),
+            turn_lease_ttl_seconds=getattr(agent, "_active_session_turn_lease_ttl_seconds", 300.0) or 300.0,
+            **witness_kwargs,
+        )
+        if sources:
+            from agent.native_sql_writer import writer_returned
+            writer_returned(sources)
+        sync_flushed_message_markers(batch_msgs, batch_rows)
+        owner_call(agent, "consume", batch_msgs, batch_rows)
+        if sources:
+            from agent.native_sql_writer import finish_original_batch
+            finish_original_batch(sources)
+    except BaseException as error:
+        if sources:
+            from agent.native_sql_writer import fail_sources
+            from hermes_state_native_book import NativeSQLFailure
+            fail_sources(sources, error)
+            if isinstance(error, Exception):
+                raise NativeSQLFailure(getattr(error, "reason", "native_sql_original_batch_unknown")) from error
+        raise
     if _newest_checkpoint_carrier(batch_msgs, "codex_reasoning_items") >= 0:
         # The insert already rewrote the older rows (SessionDB._drop_shadowed_checkpoint_rows); mirror it on
         # the live transcript so forks/compaction built from memory carry one checkpoint too. Markers stay:
@@ -402,6 +424,10 @@ def _db_flush_failed(agent, e: Exception, batch_rows: list[dict[str, Any]], adop
     deleted under the live agent and has been recreated (unparented for a delegate child whose parent went
     with it); flush markers are reset so the caller replays the full in-memory transcript. Either retry is
     taken at most once (``adoption_budget``)."""
+    from hermes_state_native_book import NativeSQLFailure
+    if isinstance(e, NativeSQLFailure):
+        agent._last_persistence_error_cause = "native_sql_unknown"
+        return None
     agent._db_flush_scan_prefix = None  # full re-scan next flush: an exception mid-loop leaves mixed dispositions
     # The only place the SQLite error is visible before it becomes a bare False — classify it so the turn-end
     # explanation names the real cause.
