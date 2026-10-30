@@ -22,10 +22,16 @@ _POLL_S = 0.25
 
 
 class _Pending:
-    __slots__ = ("event", "events", "locked", "method", "native_active_use", "native_pair_credit", "native_phase",
-                 "native_slot", "params", "qids", "replay", "result", "session_id", "value")
+    __slots__ = ("_source_construction", "event", "events", "locked", "method", "native_active_use",
+                 "native_pair_credit", "native_phase", "native_slot", "params", "qids", "replay", "result",
+                 "session_id", "value")
 
-    def __init__(self, session_id, qids=None, events=None, method=None, params=None, replay=True):
+    def __init__(self, session_id, qids=None, events=None, method=None, params=None, replay=True,
+                 *, _source_native_slot=None):
+        self.native_slot = _source_native_slot
+        self.native_active_use = None
+        self.native_phase = "constructing" if _source_native_slot is not None else None
+        self.native_pair_credit = 2 if _source_native_slot is not None else 0
         self.event = threading.Event()
         self.session_id = session_id
         self.method = method
@@ -41,10 +47,6 @@ class _Pending:
         # A batch clarify: its question ids and the answers ``clarify.lock`` has locked so far.
         self.qids = tuple(qids) if qids else None
         self.locked = {}
-        self.native_slot = None
-        self.native_active_use = None
-        self.native_phase = None
-        self.native_pair_credit = 0
 
 
 _lock = threading.Lock()
@@ -130,15 +132,8 @@ def retain_native_candidate(slot):
     with _lock:
         if slot._native_request_candidate_id is not None:
             raise RuntimeStoreError("native_original_request_reentry")
-        candidate = "srq-" + uuid.uuid4().hex
-        slot._native_request_candidate_id = candidate
-        request = _Pending(source.owner.scope["session_id"], events=source.live.event_stream,
-                           method="native.invoke", replay=False)
-        request.native_slot, request.native_phase, request.native_pair_credit = slot, "invoke", 2
-        slot._native_request_object = request
-        _open[candidate] = request
-    source.original_source_call.attach_request(slot, request)
-    return request
+    from gateway.native_request_construction import construct_native_candidate
+    return construct_native_candidate(slot, source)
 
 
 def ask_viewer(events, session_id, method, params, *, cancelled=lambda: False, timeout=REQUEST_TIMEOUT_S,

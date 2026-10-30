@@ -5,7 +5,7 @@ from dataclasses import dataclass
 import json
 import threading
 
-from agent.tool_commit_rows import MAX_CALLS, MAX_TEXT_BYTES, json_digest
+from agent.tool_commit_rows import MAX_TEXT_BYTES, json_digest
 from hermes_state_runtime import RuntimeStoreError
 
 _KEY = object()
@@ -67,15 +67,8 @@ class NativeDispatchBridge:
         self.lock, self.slots = threading.RLock(), {}
 
     def reserve(self, pending):
-        with self.lock:
-            if pending.owner is not self.owner or pending.ref is None:
-                raise RuntimeStoreError("native_original_owner_unavailable")
-            if pending.uid in self.slots or len(self.slots) >= MAX_CALLS:
-                raise RuntimeStoreError("native_original_call_reentry_or_capacity")
-            self.slots[pending.uid] = None  # A failed first construction remains consumed.
-            slot = NativeSlot(_KEY, self, pending)
-            self.slots[pending.uid] = slot
-            return slot
+        from agent.native_slot_construction import reserve_slot
+        return reserve_slot(self, pending)
 
 
 class NativeSlot:
@@ -83,6 +76,7 @@ class NativeSlot:
         if key is not _KEY:
             raise RuntimeStoreError("native_original_slot_factory_missing")
         self.bridge, self.pending = bridge, pending
+        self._source_constructions = {}
         self.lock = threading.RLock()
         self.arguments_json = frozen_json(pending.ref.args)
         self.call_json = frozen_json({"call_id": pending.call_id, "call_uid": pending.uid,
@@ -98,34 +92,15 @@ class NativeSlot:
         self.origin = self.projection = None
 
     def prepare_source_declaration(self):
-        from agent.native_turn_retention import native_retention_for_owner
-        from gateway.native_source_calls import capture_original_call
+        from agent.native_slot_construction import prepare_declaration
+        from gateway.native_source_construction import require_constructed
+        require_constructed(self)
         with self.lock:
             if self._source_declaration_phase != "fresh":
                 raise RuntimeStoreError("native_original_declaration_reentry")
             self._source_declaration_phase = "staging"
         try:
-            owner, connection = self.pending.owner, self.bridge.connection
-            retention = native_retention_for_owner(owner)
-            if retention is None:
-                raise RuntimeStoreError("native_original_task_unavailable")
-            selection = getattr(retention.live.event_stream, "_gdb_native_selection", None)
-            if selection is None or not selection.current():
-                raise RuntimeStoreError("native_original_selection_changed")
-            scope, assistant = frozen_json(owner.scope), frozen_json(self.pending.assistant)
-            original = capture_original_call(self, retention, selection, scope, assistant)
-            source = NativeSourceDeclarationRefs(
-                self, self.pending, self.pending.ref, owner, owner.agent(), owner.db, self.bridge,
-                connection, connection.authority, connection.actor, connection.transport,
-                connection.actor.transport_id, retention, retention.task, retention.loop,
-                retention.live, selection, scope, assistant, self.call_json, self.tool_json,
-                self.arguments_json, original)
-            with self.lock:
-                self._source_declaration_refs = source
-                original.attach_declaration(source)
-                _declaration_local_refs(self, source)
-                self._source_declaration_phase = "ready"
-            return source
+            return prepare_declaration(self)
         except BaseException:
             self._source_declaration_phase = "blocked"
             raise
@@ -138,8 +113,8 @@ class NativeSlot:
 
 
 def _declaration_local_refs(slot, source):
-    from gateway.native_source_calls import require_original_source_call
-    require_original_source_call(slot, source)
+    from gateway.native_source_calls import _require_original_source_call_refs
+    _require_original_source_call_refs(slot, source)
     if source.slot is not slot or source.pending is not slot.pending:
         raise RuntimeStoreError("native_original_declaration_changed")
     if not source.selection.current() or not source.owner.binding_current(source.pending):
