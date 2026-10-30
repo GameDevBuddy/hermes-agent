@@ -24,6 +24,30 @@ def _same(left, right):
     return _same_callable(left, right)
 
 
+def retain_parent(record, pool, *, view=None):
+    normal = pool if record.kind == "shared-connection" else None
+    record.pool_origin = (pool, normal, view)
+    record.pool_record, record.normal_parent = pool, normal
+    if view is not None:
+        record.view = view
+
+
+def require_parent(record, pool=None, *, origin=None):
+    original = record.pool_origin if origin is None else origin
+    parent, normal, view = original
+    if (record.pool_origin is not original or (pool is not None and parent is not pool)
+            or record.pool_record is not parent or record.normal_parent is not normal
+            or normal is not (parent if record.kind == "shared-connection" else None)
+            or record.source is not parent.source
+            or (record.kind == "shared-request" and (record.view is not view or view.pool_origin[0] is not parent))):
+        refuse(record, "shared-original-parent-association-changed")
+    record.require_current()
+    require_pool(parent)
+    if record.kind in ("shared-view", "shared-connection") and owned.find(record.client) is not record:
+        refuse(record, "shared-original-member-client-association-changed")
+    return parent
+
+
 def construct_transport(factory, *args, **kwargs):
     record = _building.get()
     if record is None:
@@ -128,7 +152,8 @@ def begin_view(view, transport):
         # The original pool retains the unreturned view through this first traceback.
         refuse(pool, "managed-shared-view-original-source-unavailable")
     record.client, record.result = view, (view, transport)
-    record.pool_record, record.holders = pool, ()
+    record.holders = ()
+    retain_parent(record, pool)
     record.view_close_attempted = record.view_close_confirmed = False
     if pool is None or pool.kind != "shared-pool":
         refuse(record, "shared-view-original-pool-unavailable")
@@ -147,9 +172,8 @@ def finish_view(record):
 
 
 def require_view(record):
-    record.require_current()
-    require_pool(record.pool_record)
-    if (record.client._inner is not record.pool_record.client
+    pool = require_parent(record)
+    if (record.client._inner is not pool.client
             or type(record.client).close is not record.view_close_method):
         refuse(record, "original-shared-view-association-changed")
 
@@ -171,6 +195,7 @@ def close_view(view):
 
 
 def register_holders(record):
+    record.original_shared_refs = record.shared_refs
     for item in record.shared_refs:
         view = owned.find(item)
         if view is not None and view.kind == "shared-view":
@@ -183,6 +208,8 @@ def register_holders(record):
 
 
 def sdk_views_closed(record):
+    if record.shared_refs is not record.original_shared_refs:
+        refuse(record, "shared-original-sdk-references-changed")
     for item in record.shared_refs:
         view = owned.find(item)
         if view is not None and view.kind == "shared-view":
@@ -203,7 +230,7 @@ def handle_view(view, request):
     if view._closed or record.source.auxiliary_closing_attempted or hermes_home_key() != record.home_key:
         refuse(record, "shared-view-request-original-context-unavailable")
     attempt = owned.reserve("shared-request", record.pool_record.transport_handle)
-    attempt.view, attempt.pool_record = record, record.pool_record
+    retain_parent(attempt, record.pool_record, view=record)
     attempt.result, attempt.active = request, True
     attempt.worker, attempt.response, attempt.response_stream = threading.current_thread(), None, None
     attempt.phase = "shared-pending"
@@ -240,7 +267,7 @@ def _create_connection(pool, args, kwargs):
     if attempt is None or attempt.pool_record is not pool:
         refuse(pool, "shared-connection-has-no-original-request")
     record = owned.reserve("shared-connection", pool.pool_create)
-    record.normal_parent, record.pool_record = pool, pool
+    retain_parent(record, pool)
     record.owner_loop, record.owner_thread, record.context = pool.owner_loop, pool.owner_thread, pool.context
     record.original_create, record.contained = pool.pool_create, ()
     with pool.source._state_lock:
@@ -280,15 +307,19 @@ def _close_batch(pool, connections):
     values = tuple(connections)
     if len(values) > 1024:
         refuse(pool, "shared-normal-close-batch-capacity")
-    for connection in values:
-        record = owned.find(connection)
+    records = tuple(owned.find(connection) for connection in values)
+    origins = tuple(record.pool_origin if record is not None else None for record in records)
+    for connection, record, origin in zip(values, records, origins):
         if record is None or record.pool_record is not pool:
             pool.extra_refs = values
             refuse(pool, "shared-pool-contained-connection-original-owner-unavailable")
+        require_parent(record, pool, origin=origin)
     token = _batch.set(pool)
     try:
         result = pool.pool_batch(values)
         require_pool(pool)
+        for record, origin in zip(records, origins):
+            require_parent(record, pool, origin=origin)
         return result
     except BaseException as error:
         owned.fail(pool, error)
@@ -298,10 +329,10 @@ def _close_batch(pool, connections):
 
 
 def _close_connection(record):
-    require_pool(record.pool_record)
-    record.require_current()
+    origin = record.pool_origin
+    pool = require_parent(record, origin=origin)
     connection = record.client
-    if (_batch.get() is not record.pool_record or connection.close is not record.connection_close_hook
+    if (_batch.get() is not pool or connection.close is not record.connection_close_hook
             or not _same(connection.is_closed, record.is_closed_method)):
         refuse(record, "shared-connection-normal-parent-unavailable")
     retain_contained(record)
@@ -318,8 +349,7 @@ def _close_connection(record):
         import inspect
         if inspect.isawaitable(record.close_result):
             refuse(record, "shared-sync-connection-close-became-async")
-        record.require_current()
-        require_pool(record.pool_record)
+        require_parent(record, pool, origin=origin)
         retain_contained(record)
         if (connection.close is not record.connection_close_hook
                 or getattr(connection, "_connection", None) is not original_inner

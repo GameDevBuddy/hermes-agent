@@ -182,6 +182,8 @@ async def shutdown_owned(runner):
             records = tuple(source.auxiliary_clients)
     try:
         # Parent SDK owners close their original injected HTTP clients, never the reverse.
+        from agent.shared_pool_links import prepare
+        shared_snapshots = prepare(records)
         children = {child for record in records if record is not None for child in record.children}
         for record in records:
             if record is None:
@@ -189,7 +191,7 @@ async def shutdown_owned(runner):
             if record not in children:
                 await close_record(record)
         from agent.shared_pool_close import close_all
-        await close_all(records)
+        await close_all(records, shared_snapshots)
         for record in records:
             if record.error is not None or record.phase not in ("closed", "view", "empty"):
                 raise OwnedGatewayUnknown("original-auxiliary-resources-remain-held")
