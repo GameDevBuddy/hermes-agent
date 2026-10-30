@@ -36,6 +36,7 @@ class OriginalSourceRuntime:
         self.bytes = base_credit  # carry the already-consumed base term once
         self.retired = False
         self.blocked = False
+        self.construction_error = None
 
     def reserve(self, book, key):
         # Caller owns this lock. A charged hole is retained, never adopted/refunded.

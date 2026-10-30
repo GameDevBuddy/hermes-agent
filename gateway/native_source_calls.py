@@ -3,6 +3,7 @@ from __future__ import annotations
 from gateway.native_source_runtime import (
     SOURCE_REFERENCE_CREDIT, MAX_SOURCE_REFERENCE_BYTES, OriginalSourceConnection, refuse,
 )
+from gateway.native_source_construction import reserve_construction, require_constructed
 
 _KEY = object()
 
@@ -41,6 +42,10 @@ class OriginalSourceAssistant:
         self.credit = SOURCE_REFERENCE_CREDIT
 
     def require_assistant(self):
+        require_constructed(self)
+        self._require_assistant_refs()
+
+    def _require_assistant_refs(self):
         from agent.tool_commit_owner import MESSAGE_UID
         c, a = self.connection, self.authority
         c.require_connection()
@@ -87,6 +92,10 @@ class OriginalSourceCall:
         self.credit = SOURCE_REFERENCE_CREDIT
 
     def require_call(self):
+        require_constructed(self)
+        self._require_call_refs()
+
+    def _require_call_refs(self):
         self.assistant.require_assistant()
         parent = self.connection.parent
         pair = parent.calls.get(id(self.slot))
@@ -184,10 +193,16 @@ def capture_original_assistant(authority, session_id, generation, live, owner, m
                 or message.get(MESSAGE_UID) != witness.get("message_uid")
                 or _source_digest(r, calls) != witness.get("calls_digest")):
             refuse("native_original_source_assistant_changed")
-        r.reserve(r.assistants, id(witness))
-        value = OriginalSourceAssistant(_KEY, owner, authority, live, selection, message, witness)
-        r.assistants[id(witness)] = value
-        value.require_assistant()
+        attempt = reserve_construction(selection.source_connection, r.assistants, id(witness), parent=owner,
+                                       book_owner=r, book_name="assistants")
+        with attempt:
+            attempt.inputs = (owner.agent(), owner.db, owner.scope)
+            value = attempt.construct(OriginalSourceAssistant, _KEY, owner, authority, live, selection, message, witness)
+            value._require_assistant_refs()
+            attempt.require_inputs((value.agent, owner.db, owner.scope))
+            if (owner.scope["session_id"] != session_id or owner.scope["generation"] != generation
+                    or owner.staged is not witness):
+                refuse("native_original_source_assistant_changed")
         return value
 
 
@@ -205,25 +220,41 @@ def capture_original_call(slot, keeper, selection, scope_json, assistant_json):
                 or p.native_dispatch_slot is not slot):
             refuse("native_original_source_capture_changed")
         # Charge and retain SAME slot BEFORE keeper registration/object allocation.
-        r.reserve(parent.calls, id(slot))
-        parent.calls[id(slot)] = (slot, None)
-    # Existing lazy owner bind already ran. Reuse existing exact custody method;
-    # beforeIO-v6's later SAME-slot invocation remains idempotent custody only.
-    keeper.retain_pin_attempt(slot)
-    matches = [call for call in assistant.calls if coalesce_tool_call_id(call) == p.call_id]
-    if len(matches) != 1:
-        refuse("native_original_source_call_occurrence_missing")
-    value = OriginalSourceCall(_KEY, assistant, slot, keeper, matches[0], scope_json, assistant_json)
-    with r.lock:
-        old = parent.calls.get(id(slot))
-        if old is None or old[0] is not slot or old[1] is not None:
-            refuse("native_original_source_capture_reentry")
-        parent.calls[id(slot)] = (slot, value)  # retain even if following check refuses
-        value.require_call()
+        attempt = reserve_construction(assistant.connection, parent.calls, id(slot), parent=parent,
+                                       book_owner=parent, book_name="calls", pair=slot)
+    with attempt:
+        attempt.arguments = (assistant, slot, keeper, selection, scope_json, assistant_json)
+        originals = tuple(assistant.calls)
+        attempt.inputs = _call_inputs(slot, keeper) + originals
+        keeper.retain_pin_attempt(slot)
+        attempt.require_inputs(_call_inputs(slot, keeper) + tuple(assistant.calls))
+        matches = [call for call in originals if coalesce_tool_call_id(call) == p.call_id]
+        if len(matches) != 1:
+            refuse("native_original_source_call_occurrence_missing")
+        value = attempt.construct(OriginalSourceCall, _KEY, assistant, slot, keeper, matches[0], scope_json, assistant_json)
+        with r.lock:
+            value._require_call_refs()
+            attempt.require_inputs(_call_inputs(slot, keeper) + tuple(assistant.calls))
+            if owner.native_source_assistant is not assistant or owner.staged is not assistant.witness:
+                refuse("native_original_source_capture_changed")
     return value
 
 
+def _call_inputs(slot, keeper):
+    return (slot.pending, slot.pending.ref, slot.pending.owner, keeper, keeper.authority,
+            keeper.agent, keeper.live, keeper.task, keeper.loop)
+
+
 def require_original_source_call(slot, source, *, request=None, use=None):
+    require_constructed(source)
+    if slot._source_declaration_phase != "ready":
+        refuse("native_original_source_declaration_changed")
+    if request is not None:
+        require_constructed(request)
+    return _require_original_source_call_refs(slot, source, request=request, use=use)
+
+
+def _require_original_source_call_refs(slot, source, *, request=None, use=None):
     value = getattr(source, "original_source_call", None)
     if type(value) is not OriginalSourceCall:
         refuse("native_original_source_call_missing")
