@@ -28,6 +28,13 @@ class _FakeNativeClient:
         self.kwargs = kwargs
 
 
+class _FakeStandardClient:
+    """Standard factory boundary only; no SDK client or HTTP transport is constructed."""
+    def __init__(self, **kwargs):
+        self.kwargs = kwargs
+        self.api_key, self.base_url = kwargs.get("api_key"), kwargs.get("base_url")
+
+
 class _NativeProfile(ProviderProfile):
     def create_client(self, **kwargs):
         return _FakeNativeClient(**kwargs)
@@ -101,14 +108,18 @@ def test_native_profile_supplies_the_auxiliary_client(registered, extra):
 @pytest.mark.parametrize(
     "profile_cls", [_PassThroughProfile, _ExplodingProfile], ids=["returns-None", "raises"]
 )
-def test_profile_without_a_client_falls_back_to_the_standard_client(registered, profile_cls):
-    from openai import OpenAI
+def test_profile_without_a_client_falls_back_to_the_standard_client(registered, profile_cls, monkeypatch):
+    from unittest.mock import Mock
+    from agent import auxiliary_client
 
-    from agent.auxiliary_client import resolve_provider_client
+    factory = Mock(side_effect=_FakeStandardClient)
+    monkeypatch.setattr(auxiliary_client, "_create_openai_client", factory)
 
     registered(_probe_profile(profile_cls, "aux-seam-fallback"))
-    client, model = resolve_provider_client("aux-seam-fallback", "probe-model")
+    client, model = auxiliary_client.resolve_provider_client("aux-seam-fallback", "probe-model")
 
     # A raising plugin can only fail to provide a client, never break auxiliary resolution.
-    assert isinstance(client, OpenAI)
+    factory.assert_called_once()
+    assert isinstance(client, _FakeStandardClient)
+    assert client.kwargs["api_key"] == _PROBE_KEY
     assert model == "probe-model"
