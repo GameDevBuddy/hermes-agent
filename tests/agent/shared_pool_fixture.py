@@ -1,12 +1,12 @@
-"""Actual factory/view/SDK/worker-join consumers; every HTTP/pool/connection constructor is mocked."""
+"""Actual consumers with modeled lower HTTP/pool/connection/executor/worker owners only."""
 import threading
-from concurrent.futures import ThreadPoolExecutor
 from types import SimpleNamespace
 
 from agent import process_bootstrap
 from gateway.run_owned_shutdown import ManagedSettlement
 from tests.agent.primary_owned_fixture import primary_fixture
 from tests.agent.auxiliary_owned_fixture import allow_normal_shutdown
+from tests.agent.shared_pool_test_fakes import Executor
 
 
 class FakeConnection:
@@ -98,13 +98,17 @@ def shared_fixture(monkeypatch, tmp_path, *, transport=FakeTransport):
     monkeypatch.setattr(httpcore, "ConnectionPool", FakePool)
     monkeypatch.setattr(httpcore, "HTTPConnection", FakeConnection)
     runner._executor_lock = threading.RLock()
-    runner._executor, runner._housekeeping_executor = ThreadPoolExecutor(max_workers=1), None
+    runner._running_agents = {}
+    runner._executor, runner._housekeeping_executor = Executor(max_workers=1), None
+    from agent import shared_pool_owned
+    monkeypatch.setattr(shared_pool_owned, "threading", SimpleNamespace(current_thread=Executor.current_thread))
     source.settlement = ManagedSettlement(source, runner)
     return source, runner
 
 
 async def join_original(source):
     allow_normal_shutdown(source)
+    await source.settlement._join_work()
     await source.settlement._join_pools()
 
 
