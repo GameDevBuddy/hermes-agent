@@ -61,6 +61,10 @@ class OwnedGatewaySource:
         self._transport_original_record = None
         self._shutdown = False
         self._control_closed = False
+        self._control_reader_attempt = self._control_reader = None
+        self._app_context_stages, self._app_context_slots, self._app_context_requests = {}, {}, {}
+        self._app_context_credit = 0
+        self._app_context_error = None
         self._ready_emitted = self._complete_emitted = False
         self._unknown_hold = threading.Event()
         self.settlement = None
@@ -151,17 +155,9 @@ class OwnedGatewaySource:
 
     def read_shutdown(self):
         try:
-            frame = _frame(self.stdin)
-            if (self._shutdown or set(frame) != {"protocol", "command", "attemptId"}
-                    or frame["command"] != "shutdown" or frame["attemptId"] != self.contract.attempt_id):
-                raise OwnedGatewayUnknown("unknown-duplicate-or-mismatched-shutdown")
-            self._shutdown = True
-            # The original parent half-closes only after its one flushed frame.
-            # EOF here closes input; it says nothing about work or process exit.
-            if self.stdin.readline(MAX_FRAME + 1) != b"":
-                raise OwnedGatewayUnknown("extra-or-duplicate-original-control-frame")
-            self._control_closed = True
-        except Exception as error:
+            from hermes_owned_control import read_original_control
+            read_original_control(self)
+        except BaseException as error:
             raise self.unknown(str(error)) from error
 
     def bind_runner(self, runner):

@@ -94,8 +94,8 @@ class NativeSelection:
         }
 
 async def bind_context(c, ref, params):
-    # No native RPC is registered. Root must compose its genuine original
-    # transport/caller issuer before this internal metadata bind can be used.
+    # Only the original owned stdin consumer installs this context association.
+    # Staging on the authenticated websocket supplies no native-call rights.
     from gateway.native_source_issuance import require_original_app_context
     require_original_app_context(c, ref)
     # Current verified dashboard upgrade already passes operator=True out of band.
@@ -138,6 +138,8 @@ def bridge_for_owner(authority, session_id, generation, live, owner):
         selection = getattr(live.event_stream, "_gdb_native_selection", None)
         if not isinstance(selection, NativeSelection) or not selection.current():
             raise RuntimeStoreError("permission_denied")
+        from gateway.native_source_issuance import require_original_app_context
+        require_original_app_context(selection.connection, selection.ref)
         if (selection.ref.profile_id != owner.scope["profile_id"]
                 or selection.instance_id != owner.scope["instance_id"]
                 or selection.authority_epoch != owner.scope["epoch"]):

@@ -115,6 +115,7 @@ class AuthorityConnection:
         self.authority = authority
         self.transport = transport
         self._gdb_original_source_connection = None
+        self._gdb_original_app_contexts = {}
         capabilities = frozenset({'session:read', 'session:submit', 'session:control',
                                   'session:approve', 'session:respond'})
         if identity:
@@ -261,6 +262,8 @@ class AuthorityConnection:
         handlers['session.control'] = partial(control, self)
         from gateway.session_onboarding import handlers as onboarding_handlers
         handlers.update(onboarding_handlers(self))
+        from gateway.native_app_context import stage
+        handlers['native.context.stage'] = partial(stage, self)
         return handlers
 
     async def dispatch(self, request):

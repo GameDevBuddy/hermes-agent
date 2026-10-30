@@ -1,9 +1,9 @@
-"""The missing App-owned original transport/call boundary is deliberately closed.
+"""Original stdin can associate a context; the App-owned call boundary stays closed.
 
 Python reference custody, UIDs, digests, SQL rows and local locks are not an
 OriginalCanonicalCall, OriginalCanonicalOrigin, commit proof or native permit.
-Root must compose those actual App constructors with the same transport/call;
-there is intentionally no callback, boolean, wire field or installer here.
+Root must compose actual App call constructors with the same transport/call.
+An original-pipe context association supplies none of those per-call rights.
 """
 from __future__ import annotations
 
@@ -15,7 +15,8 @@ def require_original_app_context(connection, ref):
     source = require_original_connection(connection)
     if source.authority.profile_id != ref.profile_id:
         raise RuntimeStoreError("profile_mismatch")
-    raise RuntimeStoreError("native_original_app_context_issuer_missing")
+    from gateway.native_app_context import require_context
+    return require_context(connection, ref)
 
 
 def require_original_app_call(source, request=None):
