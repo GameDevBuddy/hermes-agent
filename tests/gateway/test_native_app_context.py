@@ -137,7 +137,7 @@ def test_invalid_decoded_control_frames_never_emit_context_ack(case, raw):
     assert not case.connection._gdb_original_app_contexts
 
 
-@pytest.mark.parametrize("changes", [{"requestId": "bad"}, {"nonce": "D" * 64},
+@pytest.mark.parametrize("changes", [{"requestId": "bad"}, {"requestId": "Z" * 26}, {"nonce": "D" * 64},
     {"nonce": None}, {"contextId": "context-fixture\n"}, {"extra": 1},
     {"attemptId": "another-attempt"}, {"command": "unknown"}])
 def test_bind_control_schema_and_attempt_are_strict(case, changes):

@@ -9,12 +9,13 @@ from hermes_owned_gateway import MAX_FRAME, OwnedGatewayUnknown, _frame
 
 _KEY = object()
 _NONCE = re.compile(r"[0-9a-f]{64}\Z")
-_ULID = re.compile(r"[0-9A-HJKMNP-TV-Z]{26}\Z")
+_ULID = re.compile(r"[0-7][0-9A-HJKMNP-TV-Z]{25}\Z")
 
 
 class OriginalControlReader:
     def __init__(self, key, source):
-        if key is not _KEY:
+        from hermes_owned_gateway import OwnedGatewaySource, current
+        if key is not _KEY or type(source) is not OwnedGatewaySource or current(source.contract) is not source:
             raise OwnedGatewayUnknown("original-control-reader-factory-required")
         self.source, self.thread = source, threading.current_thread()
         self.stdin_owner, self.stdin = source.stdin_owner, source.stdin

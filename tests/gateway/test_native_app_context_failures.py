@@ -18,7 +18,7 @@ def case(monkeypatch, tmp_path):
 
 
 @pytest.mark.parametrize("change", ["generation", "job", "stdin_owner", "stdout_owner", "loop", "task",
-                                    "actor", "transport", "session", "retired", "profile"])
+                                    "actor", "transport", "session", "retired", "profile", "contract"])
 def test_changed_originals_after_staging_cannot_bind(case, change):
     case.stage()
     stage = case.source._app_context_stages[NONCE]
@@ -34,6 +34,7 @@ def test_changed_originals_after_staging_cannot_bind(case, change):
         "session": lambda: case.authority.sessions.update(s=Data()),
         "retired": lambda: setattr(case.connection._gdb_original_source_connection, "retired", True),
         "profile": lambda: setattr(case.authority, "profile_id", "foreign-profile"),
+        "contract": lambda: setattr(case.source, "contract", Data(attempt_id=case.contract.attempt_id)),
     }
     mutations[change]()
     with pytest.raises(owned.OwnedGatewayUnknown):
@@ -154,3 +155,28 @@ def test_stage_capacity_is_checked_before_allocating_another_original_record(cas
     reply = case.stage()
     assert reply["error"]["data"]["reason"] == "native_original_app_context_capacity_or_reentry"
     assert not case.source._app_context_stages and case.source._app_context_credit == 0
+
+
+def test_request_cannot_substitute_a_source_proxy_with_the_same_books_and_streams(case, monkeypatch):
+    case.stage()
+    submit = case.submit
+
+    class SourceProxy:
+        def __getattr__(self, name):
+            return getattr(case.source, name)
+
+    proxy = SourceProxy()
+
+    def substitute(coroutine, loop):
+        case.source._app_context_requests[REQUEST].source = proxy
+        return submit(coroutine, loop)
+
+    monkeypatch.setattr("hermes_owned_control.asyncio.run_coroutine_threadsafe", substitute)
+    with pytest.raises(owned.OwnedGatewayUnknown):
+        case.read()
+    request = case.source._app_context_requests[REQUEST]
+    assert request.source is proxy and request.stage.source is case.source
+    assert request.error is not None and request.association is None
+    assert not case.connection._gdb_original_app_contexts
+    assert not hasattr(case.live.event_stream, "_gdb_native_selection")
+    assert case.source.phase == "unknown" and len(case.events()) == 1
