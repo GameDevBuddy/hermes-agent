@@ -19,6 +19,7 @@ import sys
 _BOUND = None
 _PLAN_BYTES = None
 _DEPENDENCY_INPUTS = ("pm/lock.json", "pyproject.toml", "uv.lock")
+_MAX_PLAN_BYTES = 128 * 1024
 
 
 class BootstrapRefused(SystemExit):
@@ -225,13 +226,29 @@ def original_plan_bytes(contract):
     return _PLAN_BYTES
 
 
+def _plan_pairs(items):
+    value = {}
+    for key, item in items:
+        if key in value:
+            _refuse("duplicate-bootstrap-plan-field")
+        value[key] = item
+    return value
+
+
+def _plan_constant(_value):
+    _refuse("non-finite-bootstrap-plan-value")
+
+
 def _read_plan(plan_path):
     try:
-        raw_plan = _absolute(plan_path).read_bytes()
-        if len(raw_plan) > 128 * 1024:
+        # Apply the byte budget to intake, not after an unbounded allocation.
+        with _absolute(plan_path).open("rb") as stream:
+            raw_plan = stream.read(_MAX_PLAN_BYTES + 1)
+        if len(raw_plan) > _MAX_PLAN_BYTES:
             _refuse("bootstrap-plan-too-large")
-        data = json.loads(raw_plan.decode("utf-8-sig", "strict"))
-    except (OSError, ValueError):
+        data = json.loads(raw_plan.decode("utf-8-sig", "strict"),
+                          object_pairs_hook=_plan_pairs, parse_constant=_plan_constant)
+    except (OSError, ValueError, RecursionError):
         _refuse("cannot-read-required-json")
     if type(data) is not dict:
         _refuse("required-json-is-not-an-object")
