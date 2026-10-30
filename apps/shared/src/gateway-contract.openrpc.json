@@ -24448,6 +24448,87 @@
         "title": "ModelSaveKeyResult",
         "type": "object"
       },
+      "NativeContextStageParams": {
+        "additionalProperties": false,
+        "properties": {
+          "nonce": {
+            "title": "Nonce",
+            "type": "string"
+          },
+          "session_id": {
+            "title": "Session Id",
+            "type": "string"
+          },
+          "context_id": {
+            "title": "Context Id",
+            "type": "string"
+          },
+          "snapshot_sha256": {
+            "title": "Snapshot Sha256",
+            "type": "string"
+          },
+          "tools": {
+            "items": {
+              "$ref": "#/components/schemas/NativeContextTool"
+            },
+            "title": "Tools",
+            "type": "array"
+          }
+        },
+        "required": [
+          "nonce",
+          "session_id",
+          "context_id",
+          "snapshot_sha256",
+          "tools"
+        ],
+        "title": "NativeContextStageParams",
+        "type": "object"
+      },
+      "NativeContextStageResult": {
+        "additionalProperties": false,
+        "properties": {
+          "staged": {
+            "const": true,
+            "title": "Staged",
+            "type": "boolean"
+          },
+          "context_id": {
+            "title": "Context Id",
+            "type": "string"
+          },
+          "nonce": {
+            "title": "Nonce",
+            "type": "string"
+          }
+        },
+        "required": [
+          "staged",
+          "context_id",
+          "nonce"
+        ],
+        "title": "NativeContextStageResult",
+        "type": "object"
+      },
+      "NativeContextTool": {
+        "additionalProperties": false,
+        "properties": {
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "tool_ref": {
+            "title": "Tool Ref",
+            "type": "string"
+          }
+        },
+        "required": [
+          "name",
+          "tool_ref"
+        ],
+        "title": "NativeContextTool",
+        "type": "object"
+      },
       "NoticePayload": {
         "additionalProperties": false,
         "description": "``tui_gateway/model_switch.py`` capability-refresh notice.",
@@ -47843,6 +47924,24 @@
         "name": "result",
         "schema": {
           "$ref": "#/components/schemas/KanbanRunResult"
+        }
+      }
+    },
+    {
+      "name": "native.context.stage",
+      "summary": "Stage a verified canonical context selection for the original owned stdin. No native work, per-call authority or execution is admitted.",
+      "params": [
+        {
+          "name": "params",
+          "schema": {
+            "$ref": "#/components/schemas/NativeContextStageParams"
+          }
+        }
+      ],
+      "result": {
+        "name": "result",
+        "schema": {
+          "$ref": "#/components/schemas/NativeContextStageResult"
         }
       }
     },

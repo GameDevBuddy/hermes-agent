@@ -5327,6 +5327,22 @@ export interface CanonicalBotDeliverResult {
   error?: string | null
   reason?: string | null
 }
+export interface NativeContextStageParams {
+  nonce: string
+  session_id: string
+  context_id: string
+  snapshot_sha256: string
+  tools: NativeContextTool[]
+}
+export interface NativeContextTool {
+  name: string
+  tool_ref: string
+}
+export interface NativeContextStageResult {
+  staged: true
+  context_id: string
+  nonce: string
+}
 /** ``answers`` rides only on a reconnect replay (locks the server already accepted; null = skipped). */
 export interface ClarifyRequestParams {
   session_id: string
@@ -6821,6 +6837,8 @@ export interface CanonicalRpcMethods {
   'image.attach_bytes': { params: ImageAttachBytesParams; result: CanonicalAttachedImageResult }
   /** Native-owner only: admit the dispatcher's current claim on a kanban task. */
   'kanban.run': { params: KanbanRunParams; result: KanbanRunResult }
+  /** Stage a verified canonical context selection for the original owned stdin. No native work, per-call authority or execution is admitted. */
+  'native.context.stage': { params: NativeContextStageParams; result: NativeContextStageResult }
   'profiles.list': { params: CanonicalProfilesParams; result: CanonicalProfilesResult }
   /** Retire a queued admission; a started one is interrupted in the same call. */
   'prompt.cancel': { params: PromptCancelParams; result: AdmissionStatus }
@@ -6890,6 +6908,7 @@ export const CANONICAL_RPC_METHODS = [
   'groups.retry',
   'image.attach_bytes',
   'kanban.run',
+  'native.context.stage',
   'profiles.list',
   'prompt.cancel',
   'prompt.receipt',
