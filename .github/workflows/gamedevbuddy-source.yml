@@ -1,0 +1,65 @@
+name: GameDevBuddy source checks
+
+on:
+  push:
+    branches: [codex/gamedevbuddy-engine]
+
+permissions:
+  contents: read
+
+jobs:
+  source-tests:
+    name: Descriptor and original attach (source only)
+    if: github.repository == 'GameDevBuddy/hermes-agent'
+    runs-on: windows-latest
+    timeout-minutes: 20
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@f548e57e544e1ff5a4c46bf1e1b8685f8e4a348a # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Set fresh source fixture locations
+        env:
+          GDB_SOURCE_FIXTURE: ${{ runner.temp }}/gdb-source-${{ github.run_id }}-${{ github.run_attempt }}
+        run: |
+          set -euo pipefail
+          gdb_source_root="$(cygpath -m "$GDB_SOURCE_FIXTURE")"
+          mkdir -p "$gdb_source_root"/{home,local,roaming,tmp,cache,pycache,runtime}
+          {
+            printf '%s\n' "HOME=$gdb_source_root/home"
+            printf '%s\n' "USERPROFILE=$gdb_source_root/home"
+            printf '%s\n' "LOCALAPPDATA=$gdb_source_root/local"
+            printf '%s\n' "APPDATA=$gdb_source_root/roaming"
+            printf '%s\n' "TEMP=$gdb_source_root/tmp" "TMP=$gdb_source_root/tmp" "TMPDIR=$gdb_source_root/tmp"
+            printf '%s\n' "XDG_CACHE_HOME=$gdb_source_root/cache" "UV_CACHE_DIR=$gdb_source_root/cache/uv"
+            printf '%s\n' "HERMES_HOME=$gdb_source_root/home/agent-home" "HERMES_RUNTIME_DIR=$gdb_source_root/runtime"
+            printf '%s\n' "PYTHONPYCACHEPREFIX=$gdb_source_root/pycache"
+            printf '%s\n' 'PYTHON_CPU_COUNT=1' 'PYTHONDONTWRITEBYTECODE=1' 'PYTHONNOUSERSITE=1'
+            printf '%s\n' 'HF_HUB_OFFLINE=1' 'TRANSFORMERS_OFFLINE=1'
+          } >> "$GITHUB_ENV"
+
+      - name: Build the declared frozen source test environment
+        id: pm
+        uses: ./.github/actions/setup-pm
+        with:
+          toolchain: python
+          extras: '[]'
+          test-environment: 'true'
+          cache: 'false'
+          cache-python: 'false'
+          cache-node: 'false'
+
+      - name: Run descriptor and protocol behavior checks
+        env:
+          HERMES_PYTHON: ${{ steps.pm.outputs.python-path }}
+        run: |
+          bash scripts/run_tests.sh -j 1 --file-timeout 120 --file-retries 0 --no-duration-cache \
+            tests/hermes_cli/test_gamedevbuddy.py \
+            tests/hermes_cli/test_gamedevbuddy_environment.py \
+            tests/hermes_cli/test_gamedevbuddy_foreground.py \
+            tests/hermes_cli/test_owned_gateway_source.py \
+            tests/hermes_cli/test_retained_bootstrap.py \
+            -- -p no:cacheprovider --tb=short
