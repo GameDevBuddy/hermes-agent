@@ -82,6 +82,11 @@ class OwnedGatewaySource:
         self.browser_error = None
         self.browser_closing = self.browser_closed = False
         self.browser_snapshot = None
+        self.cron_records = []
+        self.cron_credit = 0
+        self.cron_error = self.cron_snapshot = None
+        self.cron_closing = self.cron_work_joined = self.cron_closed = False
+        self.cron_pool_join_attempted = False
         self.entry = None
 
     def unknown(self, reason):

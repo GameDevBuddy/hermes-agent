@@ -97,6 +97,8 @@ class ManagedSettlement:
         from cron import scheduler
         for authority in all_authorities(self.runner):
             await self._join_authority_work(authority)
+        from cron.scheduler_owned_close import join_work
+        await join_work(self)
         with scheduler._running_lock:
             cron_futures = tuple(scheduler._running_futures.values())
         for future in cron_futures:
@@ -161,7 +163,8 @@ class ManagedSettlement:
             self.runner._executor_closing = True
             pools = [self.runner._executor, self.runner._housekeeping_executor]
         from agent.shared_pool_close import begin_worker_join, finish_worker_join
-        claim = begin_worker_join(self, pools)
+        from cron.scheduler_owned_close import retained_pools, join_pools
+        claim = begin_worker_join(self, pools + list(retained_pools(self.source)))
         try:
             for pool in pools:
                 if pool is not None:
@@ -169,6 +172,7 @@ class ManagedSettlement:
                     await asyncio.to_thread(pool.shutdown, wait=True, cancel_futures=False)
                     if any(thread.is_alive() for thread in pool._threads):
                         raise OwnedGatewayUnknown("canonical-executor-still-has-writers")
+            await join_pools(self)
             finish_worker_join(claim)
         except BaseException as error:
             if claim is not None:
@@ -188,6 +192,8 @@ class ManagedSettlement:
             await join_thread(self.integrity_writer)
         await self.loop.shutdown_asyncgens()
         await self.loop.shutdown_default_executor()
+        from cron.scheduler_owned_close import require_closed
+        require_closed(self.source)
         if asyncio.all_tasks(self.loop) - {self.task}:
             raise OwnedGatewayUnknown("unsettled-loop-work-is-not-normal-exit")
         self.source.job.require_only_current_process()

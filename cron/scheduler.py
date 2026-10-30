@@ -1,4 +1,4 @@
-# health: allow FILE_LINES -- security fix for #82010: distinguish an explicitly-empty toolset allowlist (fail closed, nothing allowed) from an absent one (no restriction); the added lines are minimal fail-closed branches at this existing chokepoint. Also #141468: match the `mcp-<server>` toolset spelling so a narrow job's MCP allowlist is not widened into every enabled server — a minimal branch at the same chokepoint.
+# health: allow FILE_LINES -- security fix for #82010: distinguish an explicitly-empty toolset allowlist (fail closed, nothing allowed) from an absent one (no restriction); the added lines are minimal fail-closed branches at this existing chokepoint. Also #141468: match the `mcp-<server>` toolset spelling so a narrow job's MCP allowlist is not widened into every enabled server — a minimal branch at the same chokepoint. Original managed cron custody hooks also stay at the existing allocation/submission/cleanup API boundaries; implementation lives in scheduler_owned siblings to preserve these public entry points.
 """Cron job scheduler: tick() runs due jobs (gateway calls it every 60s from a background thread).
 A file lock (~/.hermes/cron/.tick.lock) keeps overlapping processes to one tick at a time.
 """
@@ -38,6 +38,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from cron.worker_bootstrap import WORKER_MARKER, finish_worker_boot
 from hermes_constants import get_hermes_home, hermes_home_key
+from cron.scheduler_owned_work import entry as owned_submission_entry
 from hermes_cli.observability.shared_metrics_gateway import note_cron_execution, note_cron_skipped
 from cron.env_settings import cron_env_setting
 from hermes_cli._subprocess_compat import windows_hide_flags
@@ -852,6 +853,8 @@ def release_running_job(
     releasing in a ``finally`` outside ``ctx.run`` resolves the default (launch) home instead, so
     the discard misses the real key and every secondary profile's claim leaks.
     """
+    from cron.scheduler_owned_work import releasing, released
+    original = releasing(job_id, home, owner)
     key = _inflight_key(job_id, home)
     with _running_lock:
         if owner is not None and _running_registration_owners.get(key) is not owner:
@@ -863,6 +866,7 @@ def release_running_job(
         _running_futures.pop(key, None)
         _running_worker_pids.pop(key, None)
         _scope_isolated_job_ids.discard(key)
+    released(original)
 
 
 def _inflight_min_allowance_minutes() -> float:
@@ -1223,6 +1227,10 @@ def _get_parallel_pool(max_workers: Optional[int]) -> concurrent.futures.ThreadP
     a single process-global pool is created by whichever profile the multiplexing gateway ticks
     first and then silently imposes that profile's limit on every other profile.
     """
+    from cron.scheduler_owned_pools import get_pool
+    handled, original = get_pool(max_workers)
+    if handled:
+        return original
     home = hermes_home_key(_remember_inflight_home(_get_hermes_home()))
     pool = _parallel_pools.get(home)
     if pool is None or _parallel_pool_max_workers.get(home) != max_workers:
@@ -1243,6 +1251,9 @@ def discard_parallel_pools(home_keys) -> None:
     home ever ticked, and a deleted profile's pool was never reclaimed. ``wait=False`` so the
     ticker is never blocked; queued work still drains before the executor dies.
     """
+    from cron.scheduler_owned_pools import discard
+    if discard(home_keys):
+        return
     for key in list(home_keys):
         pool = _parallel_pools.pop(key, None)
         _parallel_pool_max_workers.pop(key, None)
@@ -1252,6 +1263,9 @@ def discard_parallel_pools(home_keys) -> None:
 
 def _shutdown_parallel_pool() -> None:
     """Shut down every profile's persistent pool on process exit."""
+    from cron.scheduler_owned_pools import at_exit
+    if at_exit():
+        return
     for pool in list(_parallel_pools.values()):
         pool.shutdown(wait=True, cancel_futures=False)
     _parallel_pools.clear()
@@ -3630,6 +3644,8 @@ def _launch_external_cron_worker(job: dict) -> bool:
     and built the worker environment with the launch profile's residue and no scrub (review on
     f5f88d5058). Enable it for exactly this span; the worker then re-establishes it from the payload.
     """
+    from cron.scheduler_owned import unsupported
+    unsupported("external-worker-process", job)
     execution_id = str(job["execution_id"])
     job_id = str(job["id"])
     handoff_dir = _get_hermes_home() / "cron" / "external-workers"
@@ -4225,6 +4241,8 @@ def _resolve_max_parallel_workers() -> Optional[int]:
 def _sweep_mcp_orphans() -> None:
     """Reap MCP stdio orphans (only PIDs flagged by tools.mcp_tool._run_stdio's finally block);
     run AFTER jobs finish so live sessions are never touched."""
+    from cron.scheduler_owned import unsupported
+    unsupported("legacy-process-orphan-reaping")
     try:
         from tools.mcp_tool_lifecycle import _kill_orphaned_mcp_children
         _kill_orphaned_mcp_children()
@@ -4257,6 +4275,7 @@ def _process_due_job(job: dict, adapters, loop, verbose: bool) -> bool:
     return run_one_job(claimed_job, adapters=adapters, loop=loop, verbose=verbose)
 
 
+@owned_submission_entry
 def _submit_with_guard(job: dict, pool: concurrent.futures.ThreadPoolExecutor, process_job):
     """Submit with the in-flight dedup guard; None if a prior tick's run is still in flight.
     Running-set membership is released in the worker's finally."""
@@ -4303,9 +4322,12 @@ def _submit_with_guard(job: dict, pool: concurrent.futures.ThreadPoolExecutor, p
         _clear_run_claim_best_effort()
         return None
     registration_owner = object()
+    from cron.scheduler_owned_work import registration, prepared, worker, submission_failed
+    registration(registration_owner)
     if not try_register_running_job(job_id, owner=registration_owner):
         logger.info("Job '%s' already running — skipping", job_label)
         return None
+    registration(registration_owner, True)
     # The home the claim was registered under. The pool worker's ``finally`` runs OUTSIDE
     # ``ctx.run``, where the per-profile cron scope is not bound, so releasing without it would
     # discard the LAUNCH home's key and leak every secondary profile's claim.
@@ -4318,7 +4340,9 @@ def _submit_with_guard(job: dict, pool: concurrent.futures.ThreadPoolExecutor, p
         dispatched_job = dict(job, execution_id=execution["id"])
         note_cron_execution(dispatched_job)
         _ctx = contextvars.copy_context()
+        prepared(execution, dispatched_job, _ctx, _claim_home)
     except Exception as execution_err:
+        submission_failed(execution_err)
         # Release the claim so the next tick retries instead of wedging "already running".
         release_running_job(job_id, home=_claim_home, owner=registration_owner)
         _clear_run_claim_best_effort()
@@ -4337,8 +4361,9 @@ def _submit_with_guard(job: dict, pool: concurrent.futures.ThreadPoolExecutor, p
             release_running_job(j["id"], home=home, owner=registration_owner)
 
     try:
-        fut = pool.submit(_run_and_release)
+        fut = pool.submit(worker(_run_and_release))
     except Exception as submit_err:
+        submission_failed(submit_err)
         release_running_job(job_id, home=_claim_home, owner=registration_owner)
         _clear_run_claim_best_effort()
         finish_execution(
