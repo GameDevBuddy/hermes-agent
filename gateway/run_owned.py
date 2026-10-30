@@ -106,8 +106,9 @@ async def start_managed(source, config=None):
         settlement.bind_keepalive(start_nous_auth_keepalive())
         settlement.bind_schedulers(*boot._start_gateway_start_cron_and_housekeeping(runner))
         publish_gateway_runtime_ready(runner)
-        from gateway.run_api import warm_gateway_dashboard
-        warm_gateway_dashboard(runner)
+        # The same original bootstrap task mounts the existing full dashboard
+        # and retains its private credential before original-pipe publication.
+        await source.prepare_transport(runner)
         source.ready(runner)
         await asyncio.to_thread(source.read_shutdown)
         source.require_shutdown(runner)

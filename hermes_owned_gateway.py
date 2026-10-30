@@ -13,7 +13,7 @@ import struct
 import sys
 import threading
 
-PROTOCOL = "gdb-owned-gateway-v1"
+PROTOCOL = "gdb-owned-gateway-v2"
 MAX_FRAME = 8192
 _CURRENT = None
 
@@ -56,6 +56,9 @@ class OwnedGatewaySource:
         self.phase, self.error = "attaching", None
         self._state_lock = threading.RLock()
         self._attach_attempt = None
+        self._transport_credit = 0
+        self._transport_attempt = self._transport_record = self._transport_error = None
+        self._transport_original_record = None
         self._shutdown = False
         self._control_closed = False
         self._ready_emitted = self._complete_emitted = False
@@ -192,17 +195,47 @@ class OwnedGatewaySource:
             raise self.unknown("partial-original-control-output")
         stream.flush()
 
+    async def prepare_transport(self, runner):
+        """Capture the existing dashboard's private credential, never native rights."""
+        with self._state_lock:
+            if (self._transport_credit or self._transport_attempt is not None
+                    or self._transport_record is not None or self._transport_error is not None
+                    or self._transport_original_record is not None):
+                raise self.unknown("original-transport-already-attempted")
+            # Nominal retained metadata credit, not an allocator/RSS guarantee.
+            # Consume before even the attempt/record constructor; failure sticks.
+            self._transport_credit = 4096
+            try:
+                self._transport_attempt = object()
+                from hermes_owned_transport import TransportRecord
+                self._transport_record = TransportRecord(self, runner)
+                self._transport_original_record = self._transport_record
+            except BaseException as error:
+                self._transport_error = error
+                raise self.unknown("original-transport-construction-unavailable") from error
+        try:
+            await self._transport_original_record.prepare()
+        except BaseException as error:
+            with self._state_lock:
+                if self._transport_error is None:
+                    self._transport_error = error
+            raise self.unknown("original-transport-preparation-unavailable") from error
+
     def ready(self, runner):
         self.require_bound(runner)
         descriptor, listener = runner.session_runtime_descriptor, runner.session_api
         authority = runner.session_authorities.launch
+        record = self._transport_record
+        if record is None:
+            raise self.unknown("original-private-dashboard-transport-required")
+        credential = record.session_token()
         if (self._ready_emitted or descriptor.get("state") != "ready" or listener.task.done()
                 or authority.runner is not runner or descriptor.get("api_origin") != listener.api_origin
                 or descriptor.get("authority_epoch") != authority.epoch):
             raise self.unknown("actual-canonical-readiness-required")
         self._emit({"protocol": PROTOCOL, "event": "ready", "attemptId": self.contract.attempt_id,
                     "apiOrigin": listener.api_origin, "instanceId": descriptor["instance_id"],
-                    "authorityEpoch": authority.epoch})
+                    "authorityEpoch": authority.epoch, "sessionToken": credential})
         self._ready_emitted = True
 
     def completed(self, runner, settlement):
