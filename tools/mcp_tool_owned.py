@@ -10,28 +10,19 @@ import asyncio
 from contextlib import asynccontextmanager
 
 
-@asynccontextmanager
-async def stdio_client(parameters, errlog):
+async def _hold_stdio_unknown(source, error):
+    import anyio
+    with anyio.CancelScope(shield=True):
+        await source.retain_unknown(str(error))
+
+
+async def _read_owned_stdout(source, process, sender, done, parameters):
     import anyio
     from anyio.streams.text import TextReceiveStream
-    from mcp.client import stdio as sdk
     from mcp.shared.message import SessionMessage
     from mcp import types
-    from hermes_owned_gateway import active
-
-    source = active()
-    source.require_child_work()
-    command = await sdk._get_executable_command(parameters.command)
-    process = await sdk._create_platform_compatible_process(
-        command=command, args=parameters.args, env=sdk.get_default_environment() | (parameters.env or {}),
-        errlog=errlog, cwd=parameters.cwd)
-    source.child_transports.append(process)
-    incoming_send, incoming = anyio.create_memory_object_stream(0)
-    outgoing, outgoing_receive = anyio.create_memory_object_stream(0)
-    reader_done, writer_done = anyio.Event(), anyio.Event()
-
-    async def read():
-        pending, discard = "", False
+    pending, discard = "", False
+    with anyio.CancelScope(shield=True):
         try:
             text = TextReceiveStream(process.stdout, encoding=parameters.encoding,
                                      errors=parameters.encoding_error_handler)
@@ -45,36 +36,83 @@ async def stdio_client(parameters, errlog):
                         message = error
                     if not discard:
                         try:
-                            await incoming_send.send(message)
+                            await sender.send(message)
                         except (anyio.ClosedResourceError, anyio.BrokenResourceError):
-                            discard = True  # keep draining the actual child's stdout until EOF
+                            discard = True
+        except BaseException as error:
+            await _hold_stdio_unknown(source, error)
+            raise
         finally:
-            await incoming_send.aclose()
-            reader_done.set()
+            await sender.aclose()
+            done.set()
 
-    async def write():
-        try:
-            async with outgoing_receive:
-                async for message in outgoing_receive:
+
+async def _write_owned_stdin(source, process, receiver, done, parameters):
+    import anyio
+    with anyio.CancelScope(shield=True):
+        async with receiver:
+            try:
+                async for message in receiver:
                     raw = message.message.model_dump_json(by_alias=True, exclude_unset=True) + "\n"
                     await process.stdin.send(raw.encode(parameters.encoding, parameters.encoding_error_handler))
-        finally:
-            writer_done.set()
+            except BaseException as error:
+                await _hold_stdio_unknown(source, error)
+                raise
+            finally:
+                done.set()
 
-    async with anyio.create_task_group() as tasks:
-        tasks.start_soon(read)
-        tasks.start_soon(write)
+
+async def _settle_owned_stdio(source, process, incoming, outgoing, reader_done, writer_done):
+    import anyio
+    from hermes_owned_gateway import OwnedGatewayUnknown, active
+    with anyio.CancelScope(shield=True):
         try:
-            yield incoming, outgoing
-        finally:
+            if active() is not source:
+                raise OwnedGatewayUnknown("original-stdio-source-changed")
             await incoming.aclose()
             await outgoing.aclose()
             await writer_done.wait()
             await process.stdin.aclose()
-            await process.wait()
+            exit_code = await process.wait()
+            if type(exit_code) is not int or process.returncode != exit_code:
+                raise OwnedGatewayUnknown("original-stdio-exit-not-observed")
             await reader_done.wait()
-    await process.aclose()
+            await process.aclose()
+        except BaseException as error:
+            await _hold_stdio_unknown(source, error)
+            raise
     source.child_transports.remove(process)
+
+
+@asynccontextmanager
+async def stdio_client(parameters, errlog):
+    import anyio
+    from mcp.client import stdio as sdk
+    from hermes_owned_gateway import active
+    source = active()
+    source.require_child_work()
+    try:
+        command = await sdk._get_executable_command(parameters.command)
+        process = await sdk._create_platform_compatible_process(
+            command=command, args=parameters.args, env=sdk.get_default_environment() | (parameters.env or {}),
+            errlog=errlog, cwd=parameters.cwd)
+    except BaseException as error:
+        await _hold_stdio_unknown(source, error)
+        raise
+    source.child_transports.append(process)
+    incoming_send, incoming = anyio.create_memory_object_stream(0)
+    outgoing, outgoing_receive = anyio.create_memory_object_stream(0)
+    reader_done, writer_done = anyio.Event(), anyio.Event()
+    async with anyio.create_task_group() as tasks:
+        tasks.start_soon(_read_owned_stdout, source, process, incoming_send, reader_done, parameters)
+        tasks.start_soon(_write_owned_stdin, source, process, outgoing_receive, writer_done, parameters)
+        try:
+            yield incoming, outgoing
+        except BaseException as error:
+            await _hold_stdio_unknown(source, error)
+            raise
+        else:
+            await _settle_owned_stdio(source, process, incoming, outgoing, reader_done, writer_done)
 
 
 async def shutdown_server(server):
