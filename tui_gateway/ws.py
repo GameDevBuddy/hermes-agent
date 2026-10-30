@@ -374,7 +374,14 @@ def _authority_connection(ws: Any, transport: WSTransport, auth_identity: dict |
     if authority is None:
         return None
     from gateway.session_controls import AuthorityConnection
-    return AuthorityConnection(authority, transport, auth_identity or {}, operator=operator)
+    connection = AuthorityConnection(authority, transport, auth_identity or {}, operator=operator)
+    from gateway.native_source_runtime import capture_original_connection
+    parent = (getattr(ws, 'scope', None) or {}).get('hermes.gdb_original_source_server')
+    try:
+        capture_original_connection(parent, connection, ws, transport, asyncio.current_task())
+    except (ValueError, TypeError, KeyError):
+        pass  # Ordinary socket admission is unchanged; native custody is absent.
+    return connection
 
 
 async def _dispatch_request(authority_connection: Any, req: Any, req_method: Any, transport: WSTransport) -> Any:

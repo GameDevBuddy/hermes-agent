@@ -754,12 +754,15 @@ def _dispatch_authorized_once(
     from agent.terminal_approval_batch import prepare_current_terminal
     prepare_current_terminal(ref)
     _advance_start_order(lambda: _begin_tool_execution(agent, ref, display_index))
-    state.dispatch_ref = ref if ref.canonical_commit is not None else None
+    from agent.native_receipt_origin import execute_native_call, is_native_tool_name
+    native = is_native_tool_name(ref.name)
+    state.dispatch_ref = ref if ref.canonical_commit is not None or native else None
     from agent.tool_progress_relay import bound_tool_progress
     from tools.connectors.data_use import collect_data_use
     with bound_tool_progress(agent.tool_progress_callback, ref.name, ref.call_id), collect_data_use() as data_use:
         try:
-            return _run_with_activity_heartbeat(agent, ref.name, lambda: execute(ref.args))
+            dispatch = (lambda: execute_native_call(agent, ref, authorization_gate)) if native else lambda: execute(ref.args)
+            return _run_with_activity_heartbeat(agent, ref.name, dispatch)
         finally:
             state.data_use = frozenset(data_use)
 

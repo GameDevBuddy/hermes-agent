@@ -32,8 +32,12 @@ class PendingToolCommit:
         self.compression_holder = assistant["compression_holder"]
         self.receipt = None
         self.publication_observed = False
+        self.native_dispatch_slot = None
+        self.native_origin_error = None
 
     def prepare(self, message, raw_digest):
+        if self.native_dispatch_slot is not None or self.native_origin_error is not None:
+            return  # No App-issued native use exists; ordinary row observation is unchanged.
         projection = text_digest(message.get("content"))
         if raw_digest is None or projection is None or self.effective_args_digest is None:
             return
@@ -90,6 +94,9 @@ class ToolCommitOwner:
         self.watched = {}
         self.pending = []
         self.staged = None
+        self.native_bridge = self.native_bridge_factory = None
+        self.native_source_assistant = self.native_source_message_factory = None
+        self._native_retention_ref = None
 
     def usable(self):
         agent = self.agent()
@@ -132,6 +139,7 @@ class ToolCommitOwner:
     def stage(self, message):
         with self.lock:
             self.staged = None
+            self.native_source_assistant = None
             if not self.usable():
                 return
             calls = message.get("tool_calls") or []
@@ -165,6 +173,14 @@ class ToolCommitOwner:
                 if self.binding_current(pending)
             )
 
+    def writer_sources(self, messages):
+        with self.lock:
+            return tuple((index, entry[1], message)
+                         for index, message in enumerate(messages)
+                         if (entry := self.watched.get(id(message))) is not None
+                         and entry[0] is message and isinstance(entry[1], PendingToolCommit)
+                         and entry[1].native_dispatch_slot is not None)
+
     def _matches(self, witness, pending):
         if not isinstance(witness, dict) or not self.binding_current(pending):
             return False
@@ -197,6 +213,10 @@ class ToolCommitOwner:
                             and witness.get("message_uid") == pending["message_uid"]
                             and witness.get("calls_digest") == pending["calls_digest"]):
                         self.staged = deepcopy(witness)
+                        self.native_source_assistant = None
+                        if self.native_source_message_factory is not None:
+                            self.native_source_assistant = self.native_source_message_factory(
+                                self, message, self.staged)
                 else:
                     pending.consume(witness)
                 self.watched.pop(id(message), None)
@@ -231,7 +251,27 @@ class ToolCommitOwner:
                 return None
             pending = PendingToolCommit(self, self.staged, uid, ref, args_digest)
             self.pending.append(pending)
+            self._bind_native_pending(pending)
             return pending
+
+    def _bind_native_pending(self, pending):
+        from agent.native_receipt_origin import NativeDispatchBridge, is_native_tool_name
+        if not is_native_tool_name(pending.ref.name):
+            return
+        bridge = self.native_bridge
+        if bridge is None and self.native_bridge_factory is not None:
+            try:
+                bridge = self.native_bridge_factory(self)
+                self.native_bridge = bridge
+            except (ValueError, TypeError, UnicodeError, RecursionError):
+                pending.native_origin_error = "native_original_owner_unavailable"
+        if type(bridge) is not NativeDispatchBridge or bridge.owner is not self:
+            pending.native_origin_error = "native_original_owner_unavailable"
+            return
+        try:
+            pending.native_dispatch_slot = bridge.reserve(pending)
+        except (ValueError, TypeError, UnicodeError, RecursionError):
+            pending.native_origin_error = "native_reservation_unavailable"
 
 
 def owner_call(agent, method, *args, default=None):

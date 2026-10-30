@@ -114,6 +114,7 @@ class AuthorityConnection:
     def __init__(self, authority, transport, identity, *, operator=False):
         self.authority = authority
         self.transport = transport
+        self._gdb_original_source_connection = None
         capabilities = frozenset({'session:read', 'session:submit', 'session:control',
                                   'session:approve', 'session:respond'})
         if identity:
@@ -164,6 +165,14 @@ class AuthorityConnection:
                 if connection is None or connection.authority is not sibling:
                     identity = dict(self._identity, profile_id=sibling.profile_id, instance_id=sibling.instance_id)
                     connection = AuthorityConnection(sibling, self.transport, identity, operator=self._operator)
+                    parent = self._gdb_original_source_connection
+                    if parent is not None:
+                        from gateway.native_source_runtime import capture_original_connection
+                        try:
+                            capture_original_connection(parent.parent, connection,
+                                parent.ws, self.transport, parent.task)
+                        except (ValueError, TypeError, KeyError):
+                            pass  # Ordinary routing stays; missing source custody refuses.
                     self._siblings[sibling.profile_id] = connection
                 return connection
         if registry is not None and registry.starting(profile) is not None:
@@ -903,6 +912,8 @@ class AuthorityConnection:
             params["prompt_id"], {"answer": params["answer"]}, kind="clarify")
 
     async def close(self):
+        from gateway.native_source_runtime import retire_original_connection
+        retire_original_connection(self)
         for sibling in self._siblings.values():
             await sibling.close()
         self._siblings.clear()

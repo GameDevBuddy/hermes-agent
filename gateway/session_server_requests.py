@@ -22,7 +22,8 @@ _POLL_S = 0.25
 
 
 class _Pending:
-    __slots__ = ("event", "events", "locked", "method", "params", "qids", "replay", "result", "session_id", "value")
+    __slots__ = ("event", "events", "locked", "method", "native_pair_credit", "native_phase",
+                 "native_slot", "params", "qids", "replay", "result", "session_id", "value")
 
     def __init__(self, session_id, qids=None, events=None, method=None, params=None, replay=True):
         self.event = threading.Event()
@@ -40,6 +41,9 @@ class _Pending:
         # A batch clarify: its question ids and the answers ``clarify.lock`` has locked so far.
         self.qids = tuple(qids) if qids else None
         self.locked = {}
+        self.native_slot = None
+        self.native_phase = None
+        self.native_pair_credit = 0
 
 
 _lock = threading.Lock()
@@ -82,7 +86,11 @@ def resolve(frame, *, session_ok=lambda session_id, events: True) -> bool:
     (session ids are only unique per profile, and ``_open`` is process-wide)."""
     with _lock:
         pending = _open.get(frame["id"])
-        if pending is None or not session_ok(pending.session_id, pending.events):
+        if pending is None:
+            return False
+        if pending.native_slot is not None:
+            return False  # Raw JSON responses do not mint an App origin or source ACK.
+        if not session_ok(pending.session_id, pending.events):
             return False
         _open.pop(frame["id"], None)
         locked = dict(pending.locked) if pending.qids is not None else None
@@ -95,6 +103,33 @@ def resolve(frame, *, session_ok=lambda session_id, events: True) -> bool:
     pending.result = result if isinstance(result, dict) else None
     pending.event.set()
     return True
+
+
+def register_native_request(slot):
+    """Retain the one actual candidate; absent App issuance never sends a frame."""
+    from agent.native_original_use import _acquire_original_native_use
+    from hermes_state_runtime import RuntimeStoreError
+    source = slot._source_declaration_refs
+    if source is None:
+        raise RuntimeStoreError("native_original_declaration_missing")
+    with _lock:
+        if slot._native_request_candidate_id is not None:
+            raise RuntimeStoreError("native_original_request_reentry")
+        candidate = "srq-" + uuid.uuid4().hex
+        slot._native_request_candidate_id = candidate
+        request = _Pending(source.owner.scope["session_id"], events=source.live.event_stream,
+                           method="native.invoke", replay=False)
+        request.native_slot, request.native_phase, request.native_pair_credit = slot, "invoke", 2
+        slot._native_request_object = request
+        _open[candidate] = request
+    try:
+        _acquire_original_native_use(slot, request)
+        from gateway.native_source_stop import require_native_pin_for_invoke
+        require_native_pin_for_invoke(slot._native_pin)
+    except BaseException:
+        request.native_phase = "blocked"
+        raise  # Candidate, pair credit, source/slot/keeper and original request stay held.
+    raise RuntimeStoreError("native_original_app_request_transport_missing")
 
 
 def ask_viewer(events, session_id, method, params, *, cancelled=lambda: False, timeout=REQUEST_TIMEOUT_S,
@@ -140,7 +175,8 @@ def withdraw(events, session_id, method) -> int:
     reason: resolved``."""
     with _lock:
         settled = [_open.pop(rid) for rid, p in list(_open.items())
-                   if p.session_id == session_id and p.events is events and p.method == method]
+                   if p.native_slot is None and p.session_id == session_id
+                   and p.events is events and p.method == method]
     for pending in settled:
         pending.event.set()
     return len(settled)
