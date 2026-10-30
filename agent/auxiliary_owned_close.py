@@ -32,25 +32,36 @@ def _claim_original_children(record):
         child.close_dispatch = record.close_dispatch
 
 
-async def _normal_on_owner(record):
+def _require_original_close_owner(record):
     from hermes_constants import hermes_home_key
+    record.require_current()
+    if (asyncio.get_running_loop() is not record.owner_loop or hermes_home_key() != record.home_key
+            or threading.current_thread() is not record.owner_thread):
+        raise OwnedGatewayUnknown("original-auxiliary-loop-or-profile-changed")
+    if (find(record.client) is not record
+            or (record.inner is not None and getattr(record.client, "_client", None) is not record.inner)
+            or any(child.owner_loop is not record.owner_loop or child.home_key != record.home_key
+                   or child.owner_thread is not record.owner_thread for child in record.children)):
+        raise OwnedGatewayUnknown("original-auxiliary-client-or-child-owner-changed")
+    actual = getattr(record.client, "close", None) or getattr(record.client, "aclose", None)
+    if not _same_callable(actual, record.close_method):
+        raise OwnedGatewayUnknown("original-auxiliary-close-entry-changed-or-already-closed")
+    for child in record.children:
+        child.require_current()
+
+
+async def _normal_on_owner(record):
     try:
-        record.require_current()
-        if (asyncio.get_running_loop() is not record.owner_loop or hermes_home_key() != record.home_key
-                or threading.current_thread() is not record.owner_thread):
-            raise OwnedGatewayUnknown("original-auxiliary-loop-or-profile-changed")
-        if (find(record.client) is not record
-                or (record.inner is not None and getattr(record.client, "_client", None) is not record.inner)
-                or any(child.owner_loop is not record.owner_loop or child.home_key != record.home_key
-                       for child in record.children)):
-            raise OwnedGatewayUnknown("original-auxiliary-client-or-child-owner-changed")
-        actual = getattr(record.client, "close", None) or getattr(record.client, "aclose", None)
-        if not _same_callable(actual, record.close_method) or _closed(record.client):
+        _require_original_close_owner(record)
+        if _closed(record.client):
             raise OwnedGatewayUnknown("original-auxiliary-close-entry-changed-or-already-closed")
         _claim_original_children(record)
         record.close_result = record.close_method()
         if inspect.isawaitable(record.close_result):
             await record.close_result
+        # Work may yield on its original owner loop. A prior observation cannot
+        # settle a replaced runtime, child/client link, method or Job relation.
+        _require_original_close_owner(record)
         if not _closed(record.client) or (record.inner is not None and not _closed(record.inner)):
             raise OwnedGatewayUnknown("original-auxiliary-normal-close-unconfirmed")
         if record.shared_refs:
