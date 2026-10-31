@@ -106,6 +106,8 @@ class OriginalSourceCall:
         self._require_keeper(parent.runtime)
 
     def _require_pending(self):
+        from agent.native_bridge_construction import require_bridge_ready
+        require_bridge_ready(self.slot.bridge)
         p, s = self.pending, self.slot
         if (p is not s.pending or p.owner is not self.owner or p.ref is not self.ref
                 or p.native_dispatch_slot is not s or s.bridge.owner is not self.owner

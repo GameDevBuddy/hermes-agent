@@ -58,13 +58,24 @@ class NativeSourceDeclarationRefs:
 
 
 class NativeDispatchBridge:
+    def __new__(cls, connection, owner, context, snapshot, tools):
+        from agent.native_bridge_construction import allocate_bridge
+        return allocate_bridge(cls, connection, owner, context, snapshot, tools)
+
     def __init__(self, connection, owner, context, snapshot, tools):
+        self._bridge_initialized = False
+        self.slots = {}
+        from agent.native_bridge_construction import begin_bridge_initializer
+        begin_bridge_initializer(self, connection, owner, context, snapshot, tools)
         from gateway.native_source_runtime import require_original_connection
         require_original_connection(connection)
         self.connection, self.owner = connection, owner
         self.context, self.snapshot = context, snapshot
-        self.tools = tuple((item["name"], item["tool_ref"]) for item in tools)
-        self.lock, self.slots = threading.RLock(), {}
+        from agent.native_bridge_construction import bridge_tool_pair
+        self.tools = tuple(bridge_tool_pair(self, item) for item in tools)
+        self._bridge_lock_factory = threading.RLock
+        self.lock = self._bridge_lock_factory()
+        self._bridge_initialized = True
 
     def reserve(self, pending):
         from agent.native_slot_construction import reserve_slot

@@ -113,6 +113,10 @@ class ToolCommitOwner:
         self._pending_constructing = None
         self._pending_construction_credit = 0
         self.first_exception = None
+        self._native_bridge_construction = None
+        self._native_bridge_constructor_phase = "fresh"
+        self._native_bridge_constructor_credit = 0
+        self._native_bridge_constructor_error = self._native_bridge_constructor_traceback = None
         self.agent = weakref.ref(agent)
         self.db = agent._session_db
         self.scope = deepcopy(scope)
@@ -273,7 +277,8 @@ class ToolCommitOwner:
                 pending.prepare(message, raw_digest)
 
     def bind(self, ref):
-        if not construction_ready(self) or pending_unavailable(self, ref):
+        from agent.native_bridge_construction import bridge_in_progress
+        if not construction_ready(self) or bridge_in_progress(self) or pending_unavailable(self, ref):
             return None
         with self.lock:
             if (self.staged is None or len(self.pending) >= MAX_WITNESSES
@@ -309,8 +314,8 @@ class ToolCommitOwner:
         bridge = self.native_bridge
         if bridge is None and self.native_bridge_factory is not None:
             try:
-                bridge = self.native_bridge_factory(self)
-                self.native_bridge = bridge
+                from agent.native_bridge_construction import create_lazy_bridge
+                bridge = create_lazy_bridge(self, pending)
             except (ValueError, TypeError, UnicodeError, RecursionError):
                 pending.native_origin_error = "native_original_owner_unavailable"
         if type(bridge) is not NativeDispatchBridge or bridge.owner is not self:
