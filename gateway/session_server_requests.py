@@ -82,6 +82,12 @@ def is_response_frame(frame) -> bool:
             and frame["id"].startswith("srq-") and ("result" in frame or "error" in frame))
 
 
+def _retained_native_candidate(pending):
+    # A retained construction (including a failed one) is a refusal marker,
+    # never an App issuer. A displaced cached slot cannot make it ordinary.
+    return getattr(pending, "_source_construction", None) is not None or pending.native_slot is not None
+
+
 def resolve(frame, *, session_ok=lambda session_id, events: True) -> bool:
     """Settle the open request *frame* answers; False when nothing (here) waits for that id.
     ``session_ok(session_id, events)`` lets the caller refuse an answer from a connection not entitled
@@ -91,7 +97,7 @@ def resolve(frame, *, session_ok=lambda session_id, events: True) -> bool:
         pending = _open.get(frame["id"])
         if pending is None:
             return False
-        if pending.native_slot is not None:
+        if _retained_native_candidate(pending):
             return False  # Raw JSON responses do not mint an App origin or source ACK.
         if not session_ok(pending.session_id, pending.events):
             return False
@@ -158,7 +164,8 @@ def ask_viewer_result(events, session_id, method, params, *, cancelled=lambda: F
 def waiting(events, session_id, method) -> bool:
     """Whether a *method* request is open on this live session's stream (the card still waits)."""
     with _lock:
-        return any(p.session_id == session_id and p.events is events and p.method == method for p in _open.values())
+        return any(not _retained_native_candidate(p) and p.session_id == session_id
+                   and p.events is events and p.method == method for p in _open.values())
 
 
 def open_requests(events, session_id) -> list[dict]:
@@ -167,7 +174,8 @@ def open_requests(events, session_id) -> list[dict]:
     ``session.events.since`` hand a reconnecting viewer to re-render (``OpenRequestEntry``)."""
     with _lock:
         waiting_now = [(rid, p) for rid, p in _open.items()
-                       if p.session_id == session_id and p.events is events and p.replay]
+                       if not _retained_native_candidate(p) and p.session_id == session_id
+                       and p.events is events and p.replay]
         return [{"id": rid, "method": p.method,
                  "params": {**p.params, "answers": dict(p.locked)} if p.locked else dict(p.params)}
                 for rid, p in waiting_now]
@@ -179,7 +187,7 @@ def withdraw(events, session_id, method) -> int:
     reason: resolved``."""
     with _lock:
         settled = [_open.pop(rid) for rid, p in list(_open.items())
-                   if p.native_slot is None and p.session_id == session_id
+                   if not _retained_native_candidate(p) and p.session_id == session_id
                    and p.events is events and p.method == method]
     for pending in settled:
         pending.event.set()
@@ -194,7 +202,8 @@ def lock_answer(request_id, question_id, answer, *, session_ok=lambda session_id
     :func:`resolve`); ``ValueError`` for an unknown question id."""
     with _lock:
         pending = _open.get(request_id)
-        if pending is None or pending.qids is None or not session_ok(pending.session_id, pending.events):
+        if (pending is None or _retained_native_candidate(pending) or pending.qids is None
+                or not session_ok(pending.session_id, pending.events)):
             return None
         if question_id not in pending.qids:
             raise ValueError(question_id)
