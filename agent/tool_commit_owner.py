@@ -10,16 +10,15 @@ import weakref
 from agent.message_metadata import MESSAGE_UID, TOOL_CALL_UID, stamp_message_uid
 from agent.message_sanitization import coalesce_tool_call_id
 from agent.tool_commit_rows import WITNESS, MAX_WITNESSES, MAX_CALLS, json_digest, text_digest
+from agent.tool_commit_construction import construction_ready, construct_pending, pending_unavailable
 
 logger = logging.getLogger(__name__)
 
 
 class PendingToolCommit:
     def __init__(self, owner, assistant, uid, ref, args_digest):
+        self._initialized = False
         self.owner = owner
-        keys = ("row_id", "message_uid", "row_version", "calls_digest", "call_uids_digest",
-                "turn_holder", "compression_holder")
-        self.assistant = {key: deepcopy(assistant[key]) for key in keys}
         self.uid = uid
         self.ref = ref
         self.call_id, self.tool_name, self.task_id = ref.call_id, ref.name, ref.task_id
@@ -34,8 +33,14 @@ class PendingToolCommit:
         self.publication_observed = False
         self.native_dispatch_slot = None
         self.native_origin_error = None
+        keys = ("row_id", "message_uid", "row_version", "calls_digest", "call_uids_digest",
+                "turn_holder", "compression_holder")
+        self.assistant = {key: deepcopy(assistant[key]) for key in keys}
+        self._initialized = True
 
     def prepare(self, message, raw_digest):
+        if not construction_ready(self):
+            return
         if self.native_dispatch_slot is not None or self.native_origin_error is not None:
             from agent.native_sql_writer import prepare_local_message
             return prepare_local_message(self, message, raw_digest)
@@ -53,6 +58,8 @@ class PendingToolCommit:
         self.owner.watch(message, self)
 
     def consume(self, witness):
+        if not construction_ready(self):
+            return
         if self.receipt is not None or self.message is None:
             return
         if self.native_dispatch_slot is not None:
@@ -101,6 +108,11 @@ class PendingToolCommit:
 
 class ToolCommitOwner:
     def __init__(self, agent, scope, validate, publish):
+        self._initialized = False
+        self._pending_constructions = {}
+        self._pending_constructing = None
+        self._pending_construction_credit = 0
+        self.first_exception = None
         self.agent = weakref.ref(agent)
         self.db = agent._session_db
         self.scope = deepcopy(scope)
@@ -113,15 +125,19 @@ class ToolCommitOwner:
         self.native_bridge = self.native_bridge_factory = None
         self.native_source_assistant = self.native_source_message_factory = None
         self._native_retention_ref = None
+        self._initialized = True
 
     def usable(self):
+        if not construction_ready(self):
+            return False
         agent = self.agent()
         return (agent is not None and agent._session_db is self.db
                 and getattr(agent, "_canonical_tool_commit_owner", None) is self
                 and agent.session_id == self.scope["session_id"] and self.validate())
 
     def binding_current(self, frozen):
-        if not self.usable():
+        if (not self.usable()
+                or isinstance(frozen, PendingToolCommit) and not construction_ready(frozen)):
             return False
         agent = self.agent()
         if isinstance(frozen, dict):
@@ -148,11 +164,15 @@ class ToolCommitOwner:
                 and (comp["holder"] if comp is not None else None) == compression)
 
     def watch(self, message, pending):
+        if not construction_ready(self):
+            return
         with self.lock:
             if len(self.watched) < MAX_WITNESSES and self.usable():
                 self.watched[id(message)] = (message, pending)
 
     def stage(self, message):
+        if not construction_ready(self):
+            return
         with self.lock:
             self.staged = None
             self.native_source_assistant = None
@@ -178,6 +198,8 @@ class ToolCommitOwner:
                 self.watch(message, frozen)
 
     def indices(self, messages):
+        if not construction_ready(self):
+            return ()
         with self.lock:
             if not self.usable():
                 return ()
@@ -190,11 +212,14 @@ class ToolCommitOwner:
             )
 
     def writer_sources(self, messages):
+        if not construction_ready(self):
+            return ()
         with self.lock:
             return tuple((index, entry[1], message)
                          for index, message in enumerate(messages)
                          if (entry := self.watched.get(id(message))) is not None
                          and entry[0] is message and isinstance(entry[1], PendingToolCommit)
+                         and construction_ready(entry[1])
                          and entry[1].native_dispatch_slot is not None)
 
     def _matches(self, witness, pending):
@@ -211,6 +236,8 @@ class ToolCommitOwner:
                 and witness.get("compression_holder") == compression)
 
     def consume(self, messages, rows):
+        if not construction_ready(self):
+            return
         with self.lock:
             if not self.usable():
                 return
@@ -238,12 +265,16 @@ class ToolCommitOwner:
                 self.watched.pop(id(message), None)
 
     def prepare(self, pending, message, raw_digest):
+        if not construction_ready(self) or not construction_ready(pending):
+            return
         with self.lock:
             if (pending.owner is self and pending in self.pending
                     and self.binding_current(pending)):
                 pending.prepare(message, raw_digest)
 
     def bind(self, ref):
+        if not construction_ready(self) or pending_unavailable(self, ref):
+            return None
         with self.lock:
             if (self.staged is None or len(self.pending) >= MAX_WITNESSES
                     or not self.binding_current(self.staged)
@@ -263,10 +294,11 @@ class ToolCommitOwner:
             call = next(call for call in calls if coalesce_tool_call_id(call) == ref.call_id)
             if call.get("function", {}).get("name") != ref.name:
                 return None
-            if any(p.uid == uid for p in self.pending):
+            if uid in self._pending_constructions or any(p.uid == uid for p in self.pending):
                 return None
-            pending = PendingToolCommit(self, self.staged, uid, ref, args_digest)
-            self.pending.append(pending)
+            pending = construct_pending(self, PendingToolCommit, self.staged, uid, ref, args_digest)
+            if pending is None:
+                return None
             self._bind_native_pending(pending)
             return pending
 
