@@ -13,29 +13,31 @@ NATIVE_USE_CREDIT = 81920
 
 class NativeRetirementPin:
     __slots__ = (
-        "active_use", "book", "capture", "committed_data", "committed_marker", "credit", "db", "error",
+        "_sql_construction", "active_use", "book", "capture", "committed_data", "committed_marker", "credit", "db", "error",
         "expected", "owner_id", "phase", "pin_id", "scopes", "settlement", "settlement_sha256",
         "source_original_call", "source_retention", "source_slot", "source_stamp",
     )
 
     def __init__(self, key, db, owner_id, expected, *, source_slot, source_stamp,
-                 source_retention, source_original_call):
+                 source_retention, source_original_call, _source_book=None):
         if key is not _OWNER_KEY:
             raise RuntimeStoreError("native_pin_not_original_local_owner")
         self.db, self.owner_id, self.expected = db, owner_id, expected
-        self.pin_id, self.phase = uuid.uuid4().hex, "created"
+        self.phase = "constructing"
         self.capture, self.scopes, self.credit = None, None, 65536
-        self.book, self.error = None, None
+        self.book, self.error = _source_book, None
         self.settlement, self.settlement_sha256 = None, None
         self.committed_data, self.committed_marker = None, None
         self.source_slot, self.source_stamp = source_slot, source_stamp
         self.source_retention, self.source_original_call = source_retention, source_original_call
         self.active_use = None
+        self.pin_id = uuid.uuid4().hex
+        self.phase = "created"
 
 
 class NativeOriginalUse:
     __slots__ = (
-        "call_json", "capture", "credit", "data", "error", "expected", "io_checked",
+        "_sql_construction", "call_json", "capture", "credit", "data", "error", "expected", "io_checked",
         "keeper", "observation", "original_source_call", "owner", "pending", "phase", "pin", "projection", "provisional_link",
         "raw_result", "request", "slot", "source", "sql_values", "writer_entered", "writer_returned",
     )
@@ -43,15 +45,18 @@ class NativeOriginalUse:
     def __init__(self, key, pin, slot, source, request):
         if key is not _NATIVE_USE_KEY:
             raise RuntimeStoreError("native_use_not_original")
+        self.phase, self.data, self.sql_values = "staging", None, None
+        self.io_checked, self.credit, self.error = False, NATIVE_USE_CREDIT, None
         self.pin, self.slot, self.source, self.request = pin, slot, source, request
         self.pending, self.owner, self.keeper = slot.pending, slot.pending.owner, source.retention
         self.expected, self.capture, self.call_json = pin.expected, pin.capture, slot.call_json
-        self.phase, self.data, self.sql_values = "staging", None, None
-        self.io_checked, self.credit, self.error = False, NATIVE_USE_CREDIT, None
         self.original_source_call = source.original_source_call
         self.raw_result = self.projection = self.observation = None
         self.provisional_link = None
         self.writer_entered = self.writer_returned = False
+
+
+_SQL_TYPES = NativeRetirementPin, NativeOriginalUse
 
 
 def reserve_original_native_pin(slot):
@@ -73,21 +78,16 @@ def reserve_local_sql_pin(slot):
     from hermes_state_native_schema import install_schema
     from agent.native_receipt_origin import frozen_json
     from agent.tool_commit_rows import text_digest
+    from hermes_state_native_construction import construct_pin, require_fresh_pin
     source, pin = slot._source_declaration_refs, None
+    require_fresh_pin(slot, source)
     _declaration_local_refs(slot, source)
     source.retention.retain_pin_attempt(slot)
     book = book_for(source.db)
     try:
         with source.db._lock:
             book.reserve_pin(slot)
-            pin = NativeRetirementPin(
-                _OWNER_KEY, source.db, source.owner.scope["admission_id"], source.scope_json,
-                source_slot=slot, source_stamp=source.original_source_call.assistant.witness,
-                source_retention=source.retention, source_original_call=source.original_source_call)
-            pin.book = book
-            book.pins[id(slot)] = (slot, pin)
-            slot._native_pin = pin
-            source.retention.retain_before_send(slot, pin)
+            pin = construct_pin(book, slot, source, NativeRetirementPin, _SQL_TYPES[0], _OWNER_KEY)
 
         def write(conn):
             install_schema(conn)
@@ -130,6 +130,8 @@ def _acquire_original_native_use(slot, request):
 
 
 def acquire_local_sql_use(pin, request):
+    from hermes_state_native_construction import construct_use, require_fresh_use
+    require_fresh_use(pin)
     from hermes_state_native_book import block, guarded_write
     from hermes_state_native_capture import require_capture
     from hermes_state_native_schema import require_schema
@@ -150,10 +152,7 @@ def acquire_local_sql_use(pin, request):
             with keeper.lock:
                 keeper.use_credit += NATIVE_USE_CREDIT
                 keeper.active_uses[id(slot)] = None
-                use = NativeOriginalUse(_NATIVE_USE_KEY, pin, slot, source, request)
-                book.uses[pin.pin_id] = use
-                pin.active_use = slot._native_active_use = request.native_active_use = use
-                keeper.active_uses[id(use)] = use
+                use = construct_use(book, pin, slot, source, request, NativeOriginalUse, _SQL_TYPES[1], _NATIVE_USE_KEY)
 
         def write(conn):
             require_schema(conn)
@@ -189,8 +188,11 @@ def _require_request(slot, request):
 
 def _original_use_local(use):
     from gateway.native_source_calls import require_original_source_call
+    from hermes_state_native_construction import require_constructed
+    require_constructed(use)
     if type(use) is not NativeOriginalUse or type(use.pin) is not NativeRetirementPin:
         raise RuntimeStoreError("native_original_use_unbound")
+    require_constructed(use.pin)
     require_original_source_call(use.slot, use.source, request=use.request, use=use)
     use.pin.book.require_current()
     _require_request(use.slot, use.request)
@@ -259,6 +261,8 @@ def require_local_use_on_conn(use, conn):
 
 
 def require_original_native_use_for_row(db, conn, pin, pending):
+    from hermes_state_native_construction import require_constructed
+    require_constructed(pin)
     if pin is None or pin.db is not db or not conn.in_transaction:
         raise RuntimeStoreError("native_original_writer_unbound")
     use = pin.active_use

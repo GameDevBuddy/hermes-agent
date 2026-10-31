@@ -7,7 +7,7 @@ from pathlib import Path
 
 from agent.native_original_use import acquire_local_sql_use, reserve_local_sql_pin
 from gateway.session_server_requests import retain_native_candidate
-from tests.agent.test_native_source_calls import call_graph
+from tests.agent.native_sql_constructor_fixture import sql_call_graph
 from tests.gateway.native_source_fixture import finish_source_graph
 
 # Keep test data/handles strongly retained until this source-test process ends.
@@ -22,7 +22,7 @@ async def local_case(monkeypatch, request, *, use=True, pin=True):
     name = hashlib.sha256(request.node.nodeid.encode()).hexdigest()[:24]
     directory = root / name
     directory.mkdir(parents=True, exist_ok=False)
-    case = await call_graph(monkeypatch, directory)
+    case = await sql_call_graph(monkeypatch, directory)
     RETAINED.append(case)
     case.pin = reserve_local_sql_pin(case.slot) if pin else None
     case.request = retain_native_candidate(case.slot) if use else None

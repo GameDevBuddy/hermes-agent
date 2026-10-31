@@ -582,8 +582,8 @@ class SessionDB(
     def __init__(self, db_path: Path | None = None, read_only: bool = False):
         if getattr(self, "_native_pin_init_consumed", False):
             raise RuntimeError("native_sql_original_database_reinitialization_refused")
-        self._native_pin_book = self._native_pin_init_error = None
-        self._native_pin_init_consumed = self._native_pin_closing = False
+        self._native_pin_book = self._native_pin_init_error = self._native_pin_init_exception = None
+        self._native_pin_init_consumed, self._native_pin_closing, self._native_pin_init_credit = False, False, 0
         self.db_path = db_path or _default_db_path()
         _ensure_test_isolation(self.db_path)  # before any connection/pragma/mkdir
         self.read_only = read_only
