@@ -5,20 +5,31 @@ import weakref
 import logging
 
 from agent.tool_commit_owner import ToolCommitOwner
+from agent.tool_commit_construction import (
+    begin_owner_install, capture_owner_install, construct_owner, finish_owner_install,
+)
 from gateway.session_authorities import require_serving
 from gateway.session_contract import SessionRef
 from hermes_state_runtime import RuntimeStoreError
 
 
 def install_tool_commit_owner(authority, session_id, generation, agent):
-    agent._canonical_tool_commit_owner = None
+    attempt = None
     try:
-        agent._canonical_tool_commit_owner = _make_owner(authority, session_id, generation, agent)
-    except Exception:
+        attempt = begin_owner_install(authority, session_id, generation, agent)
+        agent._canonical_tool_commit_owner = None
+        capture_owner_install(attempt, authority, session_id, generation, agent)
+        value = _make_owner(authority, session_id, generation, agent, attempt)
+        finish_owner_install(attempt, value)
+    except BaseException as error:
+        if attempt is not None:
+            attempt.fail(error)
+        if not isinstance(error, Exception):
+            raise
         logging.getLogger(__name__).warning("Canonical tool commit observer not installed", exc_info=True)
 
 
-def _make_owner(authority, session_id, generation, agent):
+def _make_owner(authority, session_id, generation, agent, attempt):
     live = authority.sessions.get(session_id)
     db = getattr(agent, "_session_db", None)
     if live is None or db is not authority.db or agent.session_id != session_id:
@@ -66,7 +77,7 @@ def _make_owner(authority, session_id, generation, agent):
             return authority.publish_execution(
                 session_id, generation, "tool.canonical_committed", receipt)
 
-    owner = ToolCommitOwner(agent, scope, validate, publish)
+    owner = construct_owner(attempt, ToolCommitOwner, agent, scope, validate, publish)
     from functools import partial
     from agent.native_turn_retention import install_owner_retention
     from gateway.native_source_calls import capture_original_assistant

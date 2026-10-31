@@ -162,6 +162,7 @@ class SessionAuthority:
         # replaces, so a Stop that only reached it would let the rebuilt agent run the turn. After
         # it, a Stop goes to this agent, never through a cache that may have evicted it.
         self.adopted = {}
+        self._canonical_tool_commit_attempts = {}
         # Queued admissions whose cancellation may have committed before its observers settled.
         self.cancel_obligations = set()
         # Set by profile retirement (unserve): the drain claims no successor after its running turn.
