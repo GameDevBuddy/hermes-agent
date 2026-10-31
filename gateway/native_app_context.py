@@ -34,16 +34,20 @@ async def stage(connection, ref, params):
     if not selection.current():
         refuse("permission_denied")
     with source._state_lock:
+        from gateway.native_app_context_construction import begin_context_construction, require_no_context_constructor
+        require_no_context_constructor(source)
         slot = (id(connection), ref.session_id)
         if slot in source._app_context_slots:
             refuse("native_original_app_context_capacity_or_reentry")
         reserve(source, source._app_context_stages, params["nonce"], RECORD_CREDIT + len(encoded))
         source._app_context_slots[slot] = params["nonce"]
+        attempt = begin_context_construction(source, "stage", params["nonce"], RECORD_CREDIT + len(encoded),
+                                             source, source._app_context_stages)
         try:
-            value = object.__new__(ContextStage)
-            source._app_context_stages[params["nonce"]] = value
-            ContextStage.__init__(value, _KEY, source, original, selection, params)
-            value.require_current()
+            with attempt:
+                value = attempt.construct(ContextStage, _KEY, source, original, selection, params,
+                                          retain=lambda value: source._app_context_stages.__setitem__(params["nonce"], value))
+                value.require_current()
         except BaseException as error:
             if source._app_context_error is None:
                 source._app_context_error = error
@@ -59,20 +63,27 @@ def claim_from_reader(reader, frame):
     reader.require_reading()
     source = reader.source
     with source._state_lock:
+        from gateway.native_app_context_construction import begin_context_construction, require_no_context_constructor
+        require_no_context_constructor(source)
         reserve(source, source._app_context_requests, frame["requestId"], RECORD_CREDIT)
-        request = object.__new__(ContextRequest)
-        source._app_context_requests[frame["requestId"]] = request
-        ContextRequest.__init__(request, _KEY, reader, frame)
-        reader.active = request
+        attempt = begin_context_construction(source, "request", frame["requestId"], RECORD_CREDIT,
+                                             reader, source._app_context_requests)
         try:
-            pending = source._app_context_stages.get(frame["nonce"])
-            if type(pending) is not ContextStage or pending.request is not None:
-                refuse("native_original_app_context_stage_missing_or_consumed")
-            pending.request, request.stage = request, pending  # nonce consumed before loop submission
-            if pending.selection.context != frame["contextId"]:
-                refuse()
+            with attempt:
+                request = attempt.construct(ContextRequest, _KEY, reader, frame,
+                                            retain=lambda value: source._app_context_requests.__setitem__(frame["requestId"], value))
+                reader.active = request
+                pending = source._app_context_stages.get(frame["nonce"])
+                if type(pending) is not ContextStage or pending.request is not None:
+                    refuse("native_original_app_context_stage_missing_or_consumed")
+                pending.request, request.stage = request, pending  # nonce consumed before loop submission
+                if pending.selection.context != frame["contextId"]:
+                    refuse()
         except BaseException as error:
-            request.failed(error)
+            if attempt.value is not None:
+                attempt.value.failed(error)
+            else:
+                source.unknown("original-app-context-bind-failed")
             raise
         return request
 
@@ -88,10 +99,12 @@ async def bind_from_reader(request):
         ref = staged.selection.ref
         if ref.session_id in c._gdb_original_app_contexts:
             refuse("native_original_app_context_capacity_or_reentry")
-        value = object.__new__(OriginalAppContext)
-        request.association = value
-        OriginalAppContext.__init__(value, _KEY, request)
-        c._gdb_original_app_contexts[ref.session_id] = value
+        from gateway.native_app_context_construction import begin_context_construction
+        attempt = begin_context_construction(request.source, "association", request.frame["requestId"], 0, request)
+        with attempt:
+            value = attempt.construct(OriginalAppContext, _KEY, request,
+                                      retain=lambda value: setattr(request, "association", value))
+            c._gdb_original_app_contexts[ref.session_id] = value
         from gateway.session_authorities import owner_scope
         from gateway.session_native_context import bind_context
         with owner_scope(c.authority):
