@@ -59,6 +59,8 @@ def reserve(source, book, key, credit):
 
 class ContextStage:
     def __init__(self, key, source, original, selection, params):
+        self._context_initialized = False
+        self.request, self.error = None, None
         if key is not _KEY:
             refuse("native_original_app_context_factory_missing")
         self.source, self.original, self.selection, self.params = source, original, selection, params
@@ -68,9 +70,11 @@ class ContextStage:
         self.stdin_owner, self.stdin = source.stdin_owner, source.stdin
         self.stdout_owner, self.actor, self.transport = source.stdout_owner, original.actor, original.transport
         self.generation = generation(selection)
-        self.request, self.error = None, None
+        self._context_initialized = True
 
     def require_current(self):
+        from gateway.native_app_context_construction import require_context_constructed
+        require_context_constructed(self)
         s, c, selected = self.source, self.original.connection, self.selection
         source, original = source_for(c)
         if (not same_originals((source, original), (s, self.original))
@@ -91,23 +95,31 @@ class ContextStage:
 
 class ContextRequest:
     def __init__(self, key, reader, frame):
+        self._context_initialized = False
+        self.stage = self.task = self.future = self.coroutine = self.association = None
+        self.result, self.error, self.acknowledged = None, None, False
         if key is not _KEY:
             refuse("native_original_app_context_factory_missing")
         self.reader, self.frame = reader, frame
         self.source = reader.source
-        self.stage = self.task = self.future = self.coroutine = self.association = None
-        self.result, self.error, self.acknowledged = None, None, False
+        self._context_initialized = True
 
     def failed(self, error):
+        from gateway.native_app_context_construction import retain_context_failure, original_failure_source
+        retain_context_failure(self, error)
+        source = original_failure_source(self)
         if self.error is None:
             self.error = error
-        if self.stage is not None and self.stage.error is None:
-            self.stage.error = error
-        if self.source._app_context_error is None:
-            self.source._app_context_error = error
-        self.source.unknown("original-app-context-bind-failed")
+        stage = getattr(self, "stage", None)
+        if stage is not None and stage.error is None:
+            stage.error = error
+        if source._app_context_error is None:
+            source._app_context_error = error
+        source.unknown("original-app-context-bind-failed")
 
     def require_current(self):
+        from gateway.native_app_context_construction import require_context_constructed
+        require_context_constructed(self)
         self.reader.require_retained()
         s, frame, stage = self.source, self.frame, self.stage
         if (stage is None or s is not stage.source or self.reader.source is not stage.source
@@ -123,13 +135,18 @@ class ContextRequest:
 
 class OriginalAppContext:
     def __init__(self, key, request):
+        self._context_initialized = False
+        self.error = None
         self.request, self.stage = request, request.stage
         self.selection, self.bound = None, False
         if key is not _KEY or asyncio.current_task() is not request.task:
             refuse("native_original_app_context_factory_missing")
         request.require_current()
+        self._context_initialized = True
 
     def require_current(self, connection, ref):
+        from gateway.native_app_context_construction import require_context_constructed
+        require_context_constructed(self)
         request, stage = self.request, self.stage
         request.reader.require_retained()
         stage.require_current()
@@ -144,3 +161,6 @@ class OriginalAppContext:
                 refuse()
         elif asyncio.current_task() is not request.task:
             refuse("native_original_app_context_bind_in_progress")
+
+
+_CONTEXT_CLASSES = {"stage": ContextStage, "request": ContextRequest, "association": OriginalAppContext}

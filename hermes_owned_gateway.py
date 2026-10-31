@@ -65,6 +65,8 @@ class OwnedGatewaySource:
         self._app_context_stages, self._app_context_slots, self._app_context_requests = {}, {}, {}
         self._app_context_credit = 0
         self._app_context_error = None
+        self._app_context_traceback = None
+        self._app_context_constructions = {}
         self._ready_emitted = self._complete_emitted = False
         self._unknown_hold = threading.Event()
         self.settlement = None
