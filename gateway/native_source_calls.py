@@ -104,6 +104,9 @@ class OriginalSourceCall:
         self._require_pending()
         self._require_model_call(parent.runtime)
         self._require_keeper(parent.runtime)
+        if self.request is not None:
+            from gateway.native_request_arguments import require_request_parameters
+            require_request_parameters(self, self.request)
 
     def _require_pending(self):
         from agent.native_bridge_construction import require_bridge_ready
@@ -168,6 +171,8 @@ class OriginalSourceCall:
                     or request.native_pair_credit != 2
                     or request.events is not self.live.event_stream):
                 refuse("native_original_source_request_changed")
+            from gateway.native_request_arguments import require_request_parameters
+            require_request_parameters(self, request)
             self.request = request
 
 
