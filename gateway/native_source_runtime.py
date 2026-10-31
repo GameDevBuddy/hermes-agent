@@ -17,6 +17,8 @@ def refuse(reason="native_original_source_changed"):
 
 class OriginalSourceRuntime:
     def __init__(self, key, runner, bootstrap_task, loop):
+        self._source_capture_initialized = False
+        self._capture_constructions = {}
         capture_lock = getattr(runner, "_gdb_original_source_capture_lock", None)
         base_credit = getattr(runner, "_gdb_original_source_capture_base_credit", None)
         if (key is not _KEY or capture_lock is None
@@ -38,8 +40,11 @@ class OriginalSourceRuntime:
         self.retired = False
         self.blocked = False
         self.construction_error = None
+        self._source_capture_initialized = True
 
     def reserve(self, book, key):
+        from gateway.native_capture_construction import require_capture_ready
+        require_capture_ready(self)
         # Caller owns this lock. A charged hole is retained, never adopted/refunded.
         if (self.retired or self.blocked or key in book
                 or len(book) >= MAX_SOURCE_REFERENCES_PER_KIND
@@ -49,6 +54,8 @@ class OriginalSourceRuntime:
         book[key] = None
 
     def require_runtime(self):
+        from gateway.native_capture_construction import require_capture_ready
+        require_capture_ready(self)
         # Same ORIGINAL capture/metadata lock. Reentrant existing source callers
         # keep their lock order; this body performs no DB/IO/await/transport work.
         with self.lock:
@@ -81,6 +88,9 @@ class OriginalSourceRuntime:
 
 class OriginalSourceServer:
     def __init__(self, key, runtime, api, runner, mount, server, listener):
+        self._source_capture_initialized = False
+        self._capture_constructions = {}
+        self.construction_error = None
         if key is not _KEY:
             refuse("native_original_source_factory_missing")
         self.runtime, self.api, self.runner = runtime, api, runner
@@ -88,8 +98,11 @@ class OriginalSourceServer:
         self.task, self.handle = None, None
         self.calls = {}
         self.retiring = False
+        self._source_capture_initialized = True
 
     def require_server(self):
+        from gateway.native_capture_construction import require_capture_ready
+        require_capture_ready(self)
         r = self.runtime
         r.require_runtime()
         h = self.handle
@@ -108,14 +121,19 @@ class OriginalSourceServer:
 
 class OriginalSourceConnection:
     def __init__(self, key, parent, connection, ws, transport, task):
+        self._source_capture_initialized = False
+        self.construction_error = None
         if key is not _KEY:
             refuse("native_original_source_factory_missing")
         self.parent, self.connection = parent, connection
         self.authority, self.actor = connection.authority, connection.actor
         self.ws, self.transport, self.task = ws, transport, task
         self.retired = False
+        self._source_capture_initialized = True
 
     def require_connection(self):
+        from gateway.native_capture_construction import require_capture_ready
+        require_capture_ready(self)
         r, c = self.parent.runtime, self.connection
         self.parent.require_server()
         r.require_authority(self.authority)
@@ -130,6 +148,10 @@ class OriginalSourceConnection:
             refuse("native_original_source_connection_changed")
 
 
+_SOURCE_CAPTURE_CLASSES = {"runtime": OriginalSourceRuntime, "server": OriginalSourceServer,
+                           "connection": OriginalSourceConnection}
+
+
 def capture_original_runner(runner, bootstrap_task, loop):
     # Sole caller remains immediately after the actual canonical constructor.
     from gateway.run import GatewayRunner
@@ -139,6 +161,8 @@ def capture_original_runner(runner, bootstrap_task, loop):
             or not hasattr(runner, "_gdb_original_source_capture_base_credit")
             or not hasattr(runner, "_gdb_original_source_runtime")):
         refuse("native_original_source_runner_constructor_missing")
+    from gateway.native_capture_construction import require_fresh_capture
+    require_fresh_capture(runner, "runtime")
     capture_lock = runner._gdb_original_source_capture_lock
     if capture_lock is None:
         refuse("native_original_source_runner_constructor_missing")
@@ -150,15 +174,22 @@ def capture_original_runner(runner, bootstrap_task, loop):
                 or runner._gdb_original_source_runtime is not None):
             refuse("native_original_source_runner_missing_or_reentry")
         runner._gdb_original_source_capture_base_credit = SOURCE_REFERENCE_CREDIT
+        from gateway.native_capture_construction import begin_runtime_capture, remember_failure
+        attempt = None
         # All following validation/allocation failures retain this debit. A
         # concurrent or later factory call sees nonzero even when runtime=None.
         try:
-            if (not isinstance(bootstrap_task, asyncio.Task)
-                    or bootstrap_task.get_loop() is not loop or bootstrap_task.done()):
-                refuse("native_original_source_runner_missing_or_reentry")
-            value = OriginalSourceRuntime(_KEY, runner, bootstrap_task, loop)
-            runner._gdb_original_source_runtime = value  # publish only complete record
-        except BaseException:
+            attempt = begin_runtime_capture(runner, bootstrap_task, loop, capture_lock)
+            with attempt:
+                if (not isinstance(bootstrap_task, asyncio.Task)
+                        or bootstrap_task.get_loop() is not loop or bootstrap_task.done()):
+                    refuse("native_original_source_runner_missing_or_reentry")
+                value = attempt.construct(OriginalSourceRuntime)
+                runner._gdb_original_source_runtime = value  # publish only complete record
+        except BaseException as error:
+            if attempt is not None:
+                attempt.fail(error)
+            remember_failure(runner, error, error.__traceback__)
             runner._gdb_original_source_runtime = None
             raise  # NEVER clear/reset/refund the original consumed base credit
 
@@ -167,6 +198,8 @@ def attach_original_registry(runner, registry):
     r = getattr(runner, "_gdb_original_source_runtime", None)
     if type(r) is not OriginalSourceRuntime:
         return  # ordinary other constructor path has no native source issuer
+    from gateway.native_capture_construction import require_capture_ready
+    require_capture_ready(r)
     with r.lock:
         if r.registry is not None or runner.session_authorities is not registry:
             refuse()
@@ -177,6 +210,8 @@ def attach_original_authority(runner, authority, registry_key):
     r = getattr(runner, "_gdb_original_source_runtime", None)
     if type(r) is not OriginalSourceRuntime:
         return
+    from gateway.native_capture_construction import require_capture_ready
+    require_capture_ready(r)
     with r.lock:
         r.require_runtime()
         if (authority.runner is not runner
@@ -193,17 +228,26 @@ def capture_original_server(api, runner, mount, server, listener):
     r = getattr(runner, "_gdb_original_source_runtime", None)
     if type(r) is not OriginalSourceRuntime:
         return None
+    from gateway.native_capture_construction import begin_child_capture, require_capture_ready
+    require_capture_ready(r)
+    from gateway.native_capture_construction import require_fresh_capture
+    require_fresh_capture(api, "server", r)
     with r.lock:
         r.require_runtime()
         r.reserve(r.servers, id(api))
-        value = OriginalSourceServer(_KEY, r, api, runner, mount, server, listener)
-        r.servers[id(api)] = value
+        attempt = begin_child_capture("server", api, r, r.servers, id(api),
+                                      (_KEY, r, api, runner, mount, server, listener))
+        with attempt:
+            value = attempt.construct(OriginalSourceServer)
+            r.servers[id(api)] = value
         return value
 
 
 def attach_original_listener_task(parent, handle, task):
     if parent is None:
         return
+    from gateway.native_capture_construction import require_capture_ready
+    require_capture_ready(parent)
     with parent.runtime.lock:
         if (parent.task is not None or parent.handle is not None
                 or handle.source_owner is not parent or handle.task is not task
@@ -216,7 +260,11 @@ def attach_original_listener_task(parent, handle, task):
 def capture_original_connection(parent, connection, ws, transport, task):
     if type(parent) is not OriginalSourceServer:
         return None
+    from gateway.native_capture_construction import begin_child_capture, require_capture_ready
+    require_capture_ready(parent)
     r = parent.runtime
+    from gateway.native_capture_construction import require_fresh_capture
+    require_fresh_capture(connection, "connection", r)
     with r.lock:
         parent.require_server()
         r.require_authority(connection.authority)
@@ -226,9 +274,12 @@ def capture_original_connection(parent, connection, ws, transport, task):
                 or task.get_loop() is not r.loop or task.done()):
             refuse()
         r.reserve(r.connections, id(connection))
-        value = OriginalSourceConnection(_KEY, parent, connection, ws, transport, task)
-        r.connections[id(connection)] = value
-        connection._gdb_original_source_connection = value
+        attempt = begin_child_capture("connection", connection, r, r.connections, id(connection),
+                                      (_KEY, parent, connection, ws, transport, task))
+        with attempt:
+            value = attempt.construct(OriginalSourceConnection)
+            r.connections[id(connection)] = value
+            connection._gdb_original_source_connection = value
         return value
 
 
@@ -236,6 +287,8 @@ def require_original_connection(connection):
     value = getattr(connection, "_gdb_original_source_connection", None)
     if type(value) is not OriginalSourceConnection:
         refuse("native_original_source_connection_missing")
+    from gateway.native_capture_construction import require_capture_ready
+    require_capture_ready(value)
     with value.parent.runtime.lock:
         value.require_connection()
     return value
@@ -244,6 +297,8 @@ def require_original_connection(connection):
 def retire_original_connection(connection):
     value = getattr(connection, "_gdb_original_source_connection", None)
     if type(value) is OriginalSourceConnection:
+        from gateway.native_capture_construction import require_capture_ready
+        require_capture_ready(value)
         with value.parent.runtime.lock:
             value.retired = True  # no release, deletion, adoption or completion
 
@@ -251,6 +306,8 @@ def retire_original_connection(connection):
 def retire_original_listener(parent, *, request_stop):
     if parent is None:
         return
+    from gateway.native_capture_construction import require_capture_ready
+    require_capture_ready(parent)
     with parent.runtime.lock:
         parent.retiring = True
         held = bool(parent.calls)  # includes a retained charged construction hole

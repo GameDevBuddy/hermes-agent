@@ -373,8 +373,10 @@ class GatewayRuntimeAPI:
             from gateway.native_source_runtime import capture_original_server
             from hermes_state_runtime import RuntimeStoreError
             try:
-                self._gdb_original_source_server = capture_original_server(
+                parent = capture_original_server(
                     self, runner, web_app, source_server, source_listener)
+                from gateway.native_capture_construction import publish_captured_server
+                publish_captured_server(self, parent)
             except RuntimeStoreError:
                 pass  # Ordinary listener remains; source custody cannot be supplied.
 
