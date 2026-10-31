@@ -9,8 +9,10 @@ from hermes_state_runtime import RuntimeStoreError
 
 def _use(pending):
     from agent.native_original_use import NativeOriginalUse, _original_use_local
+    from hermes_state_native_construction import require_constructed
     slot = pending.native_dispatch_slot
     use = slot._native_active_use if slot is not None else None
+    require_constructed(use)
     if type(use) is not NativeOriginalUse or use.pending is not pending:
         raise RuntimeStoreError("native_original_writer_unbound")
     _original_use_local(use)
@@ -42,14 +44,19 @@ def fail_sources(sources, error):
         slot = pending.native_dispatch_slot
         pin = slot._native_pin if slot is not None else None
         if pin is not None:
-            block(pin.book, error, pin, pin.active_use)
+            attempt = getattr(pin, "_sql_construction", None)
+            book = attempt.book if attempt is not None else pin.book
+            block(book, error, pin, getattr(pin, "active_use", None))
 
 
 def retained_writer_sources(agent, messages):
     """An unavailable/replaced current owner must never turn native rows into ordinary rows."""
+    from hermes_state_native_construction import require_constructed
     book = getattr(agent._session_db, "_native_pin_book", None)
     if book is None:
         return ()
+    require_constructed(book)
+    book.require_current()
     result = []
     for index, message in enumerate(messages):
         for slot, pin in tuple(book.pins.values()):
