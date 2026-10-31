@@ -1,4 +1,5 @@
 """Keep the original request candidate across constructor/association failure; no transport."""
+from gateway.native_request_arguments import request_parameters
 from gateway.native_source_calls import require_original_source_call
 from gateway.native_source_construction import reserve_construction
 from gateway.native_source_runtime import refuse
@@ -22,6 +23,8 @@ def _construct_candidate(attempt, slot, source, original):
     with attempt:
         attempt.arguments = (slot, source, original, source.owner, source.live)
         attempt.inputs = _request_inputs(slot, source)
+        parameters = request_parameters(original)
+        attempt.arguments += (parameters,)
         session_id, events = source.owner.scope["session_id"], source.live.event_stream
         with requests._lock:
             if slot._native_request_candidate_id is not None:
@@ -31,7 +34,7 @@ def _construct_candidate(attempt, slot, source, original):
         attempt.require_inputs(_request_inputs(slot, source))
         request = attempt.construct(
             requests._Pending, session_id, events=events,
-            method="native.invoke", replay=False, _source_native_slot=slot,
+            method="native.invoke", params=parameters, replay=False, _source_native_slot=slot,
             retain=lambda value: setattr(slot, "_native_request_object", value))
         attempt.require_inputs(_request_inputs(slot, source))
         request.native_slot, request.native_phase, request.native_pair_credit = slot, "invoke", attempt.pair_credit
