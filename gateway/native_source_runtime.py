@@ -33,6 +33,7 @@ class OriginalSourceRuntime:
         self.servers = {}
         self.connections = {}
         self.assistants = {}
+        self.bridges = {}
         self.bytes = base_credit  # carry the already-consumed base term once
         self.retired = False
         self.blocked = False

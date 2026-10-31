@@ -6,6 +6,8 @@ from gateway.native_source_runtime import require_original_connection, refuse
 
 
 def reserve_slot(bridge, pending):
+    from agent.native_bridge_construction import require_bridge_ready
+    require_bridge_ready(bridge)
     from agent.native_receipt_origin import NativeSlot, _KEY
     from agent.tool_commit_rows import MAX_CALLS
     with bridge.lock:
@@ -30,6 +32,8 @@ def reserve_slot(bridge, pending):
 
 
 def prepare_declaration(slot):
+    from agent.native_bridge_construction import require_bridge_ready
+    require_bridge_ready(slot.bridge)
     from agent.native_receipt_origin import NativeSourceDeclarationRefs, frozen_json, _declaration_local_refs
     from agent.native_turn_retention import native_retention_for_owner
     from gateway.native_source_calls import capture_original_call

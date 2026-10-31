@@ -16,6 +16,7 @@ class NativeTurnRetention:
         self.generation, self.task, self.loop = generation, task, loop
         self.lock = threading.RLock()
         self.owner = self.agent = None
+        self.bridge_construction = self.bridge_construction_error = None
         self.slots, self.pins, self.active_uses = {}, {}, {}
         self.use_credit = 0
         self.ever_native = self.blocked = False
