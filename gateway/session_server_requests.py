@@ -115,18 +115,10 @@ def resolve(frame, *, session_ok=lambda session_id, events: True) -> bool:
 
 
 def register_native_request(slot):
-    """Retain the one actual candidate; absent App issuance never sends a frame."""
-    from agent.native_original_use import _acquire_original_native_use
-    from hermes_state_runtime import RuntimeStoreError
+    """Authenticate this source candidate on original IO; execution remains held."""
+    from gateway.native_app_call import register
     request = retain_native_candidate(slot)
-    try:
-        _acquire_original_native_use(slot, request)
-        from gateway.native_source_stop import require_native_pin_for_invoke
-        require_native_pin_for_invoke(slot._native_pin)
-    except BaseException:
-        request.native_phase = "blocked"
-        raise  # Candidate, pair credit, source/slot/keeper and original request stay held.
-    raise RuntimeStoreError("native_original_app_request_transport_missing")
+    register(slot, request)
 
 
 def retain_native_candidate(slot):
