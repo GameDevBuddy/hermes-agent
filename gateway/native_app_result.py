@@ -22,7 +22,7 @@ def _original_call(connection, frame):
     call = None if slot is None else slot._source_constructions.get("app_call")
     if type(call) is not AppCall or call.original.connection.connection is not connection:
         return None
-    return call
+    return call, pending
 
 
 def _decline(call, frame):
@@ -62,11 +62,14 @@ def _native_result(call, frame):
 
 
 def resolve(connection, frame):
-    call = _original_call(connection, frame)
-    if call is None:
+    binding = _original_call(connection, frame)
+    if binding is None:
         return False
+    call, pending = binding
     try:
         call.require_current()
+        if call.request is not pending or frame.get("id") != call.slot._native_request_candidate_id:
+            refuse("native_original_result_request_changed")
         if not call.acknowledged or call.original.connection.transport is not connection.transport:
             refuse("native_original_result_source_unavailable")
         if call.result_frame is not None or call.decline_frame is not None:
