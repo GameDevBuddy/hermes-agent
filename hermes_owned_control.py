@@ -55,6 +55,30 @@ class OriginalControlReader:
             request.failed(error)
             raise
 
+    def bind_call(self, frame):
+        from gateway.native_app_call import bind, claim
+        if (set(frame) != {"protocol", "command", "attemptId", "requestId", "nonce", "contextId",
+                           "serverRequestId", "wireSha256"}
+                or type(frame["requestId"]) is not str or not _ULID.fullmatch(frame["requestId"])
+                or type(frame["nonce"]) is not str or not _NONCE.fullmatch(frame["nonce"])
+                or type(frame["wireSha256"]) is not str or not _NONCE.fullmatch(frame["wireSha256"])
+                or type(frame["contextId"]) is not str or not 0 < len(frame["contextId"].encode("utf-8")) <= 256
+                or type(frame["serverRequestId"]) is not str
+                or not re.fullmatch(r"srq-[0-9a-f]{32}", frame["serverRequestId"])):
+            raise OwnedGatewayUnknown("invalid-original-call-control-frame")
+        call = claim(self, frame)
+        try:
+            call.bind_coroutine = bind(call)
+            call.bind_future = asyncio.run_coroutine_threadsafe(call.bind_coroutine, self.source.loop)
+            call.bind_future.result()
+            self.require_reading()
+            if call.error is not None or not call.acknowledged:
+                raise OwnedGatewayUnknown("original-call-bind-not-complete")
+            self.active = None
+        except BaseException as error:
+            call.failed(error)
+            raise
+
 
 def read_original_control(source):
     with source._state_lock:
@@ -71,6 +95,9 @@ def read_original_control(source):
         command = frame.get("command")
         if command == "bind_native_context":
             reader.bind(frame)
+            continue
+        if command == "bind_native_call":
+            reader.bind_call(frame)
             continue
         if command != "shutdown" or set(frame) != {"protocol", "command", "attemptId"}:
             raise OwnedGatewayUnknown("unknown-duplicate-or-mismatched-shutdown")

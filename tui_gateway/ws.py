@@ -247,6 +247,27 @@ class WSTransport:
         await self._safe_send_many(batch)
         return not self._closed
 
+    async def write_original_call(self, call) -> None:
+        """Send exact retained native source bytes on this original canonical socket.
+
+        Keep the actual first exception at the caller before any later guard can
+        replace it. Ordinary fanout/serialization/sanitization is not this path.
+        """
+        from gateway.native_app_call import AppCall
+        from hermes_state_runtime import RuntimeStoreError
+        if type(call) is not AppCall or not self._on_loop():
+            raise RuntimeStoreError("native_original_app_call_transport_required")
+        async with self._send_lock:
+            call.require_current()
+            if self._closed or call.original.connection.transport is not self or call.sent:
+                raise RuntimeStoreError("native_original_app_call_transport_changed")
+            try:
+                await asyncio.wait_for(self._ws.send_text(call.wire), timeout=_WS_SEND_DEADLINE_S)
+            except BaseException as error:
+                call.failed(error)
+                raise
+            call.require_current()
+
     async def write_many_async(self, frames: list[dict]) -> bool:
         """``write_async`` for an ordered batch: buffered tokens, then *frames*, in one send batch."""
         return await self.write_many_if_current_async(frames, None)

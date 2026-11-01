@@ -119,7 +119,7 @@ class NativeSlot:
     def execute(self, _gate=None):
         from gateway.session_server_requests import register_native_request
         self.prepare_source_declaration()
-        register_native_request(self)  # Missing App issuance refuses before any frame/write.
+        register_native_request(self)  # Source authentication ends at the explicit execution hold.
         raise NativeAdmissionRefused("native_original_app_call_issuer_missing")
 
 
