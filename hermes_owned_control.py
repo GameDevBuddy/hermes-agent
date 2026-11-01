@@ -79,6 +79,21 @@ class OriginalControlReader:
             call.failed(error)
             raise
 
+    def native_phase(self, frame):
+        from gateway.native_app_phases import claim, receive
+        phase = claim(self, frame)
+        try:
+            phase.coroutine = receive(phase)
+            phase.future = asyncio.run_coroutine_threadsafe(phase.coroutine, self.source.loop)
+            phase.future.result()
+            self.require_reading()
+            if phase.error is not None or not phase.completed:
+                raise OwnedGatewayUnknown("original-native-phase-not-complete")
+            self.active = None
+        except BaseException as error:
+            phase.failed(error)
+            raise
+
 
 def read_original_control(source):
     with source._state_lock:
@@ -98,6 +113,10 @@ def read_original_control(source):
             continue
         if command == "bind_native_call":
             reader.bind_call(frame)
+            continue
+        from gateway.native_app_phases import COMMANDS
+        if command in COMMANDS:
+            reader.native_phase(frame)
             continue
         if command != "shutdown" or set(frame) != {"protocol", "command", "attemptId"}:
             raise OwnedGatewayUnknown("unknown-duplicate-or-mismatched-shutdown")

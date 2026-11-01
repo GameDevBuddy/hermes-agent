@@ -887,6 +887,9 @@ class AuthorityConnection:
         return asdict(await self.authority.interrupt(self.actor, ref, params.get('execution_generation')))
 
     def _resolve_response(self, frame):
+        from gateway.native_app_result import resolve as resolve_original_result
+        if any(resolve_original_result(connection, frame) for connection in (self, *self._siblings.values())):
+            return
         from gateway.session_server_requests import may_settle, resolve
         asked = []
 
