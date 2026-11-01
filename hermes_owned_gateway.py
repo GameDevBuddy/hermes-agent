@@ -68,6 +68,8 @@ class OwnedGatewaySource:
         self._app_context_error = None
         self._app_context_traceback = None
         self._app_context_constructions = {}
+        self._native_invocations = {}
+        self._native_invocation_sequences = {}
         self._ready_emitted = self._complete_emitted = False
         self._unknown_hold = threading.Event()
         self.settlement = None

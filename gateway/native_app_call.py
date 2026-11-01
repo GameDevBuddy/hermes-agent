@@ -8,6 +8,7 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import json
+import threading
 
 from hermes_state_runtime import RuntimeStoreError
 
@@ -26,12 +27,21 @@ class AppCall:
         self.error = self.traceback = None
         self.sent = self.authenticated = self.acknowledged = False
         self.send_complete = asyncio.Event()
+        self.phases, self.phase_credits = {}, {}
+        self.protocol_phase = "source"
+        self.invocation = self.origin = self.writer_lease = None
+        self.initial_proof = self.commit_proof = self.commit_proof_sha256 = None
+        self.result_frame = self.raw_result = self.decline_frame = None
+        self.worker_event = threading.Event()
 
     def failed(self, error):
         if self.error is None:
             self.error, self.traceback = error, error.__traceback__
         self.request.native_phase = "blocked"
         self.request.event.set()
+        self.worker_event.set()
+        for phase in self.phases.values():
+            self.original.loop.call_soon_threadsafe(phase.completion.set)
 
     def require_current(self):
         require_constructed(self)
@@ -189,6 +199,7 @@ async def bind(call):
                                  "executionHeld": True})
         call.require_current()
         call.acknowledged = True
+        call.protocol_phase = "awaiting_prepare"
         call.request.native_phase = "execution_held"
         call.request.event.set()
     except BaseException as error:
