@@ -62,6 +62,7 @@ class OwnedGatewaySource:
         self._shutdown = False
         self._control_closed = False
         self._control_reader_attempt = self._control_reader = None
+        self._control_error = self._control_traceback = None
         self._app_context_stages, self._app_context_slots, self._app_context_requests = {}, {}, {}
         self._app_context_credit = 0
         self._app_context_error = None
@@ -160,6 +161,11 @@ class OwnedGatewaySource:
             from hermes_owned_control import read_original_control
             read_original_control(self)
         except BaseException as error:
+            with self._state_lock:
+                if self._control_error is None:
+                    self._control_error = error
+                    self._control_traceback = error.__traceback__
+                error = self._control_error
             raise self.unknown(str(error)) from error
 
     def bind_runner(self, runner):
