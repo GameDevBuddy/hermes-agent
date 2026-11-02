@@ -135,12 +135,15 @@ class ManagedSettlement:
         self.runner._external_drain_active = True
         self.runner._draining = True
         self.runner.session_runtime_descriptor.update(state="draining", capabilities=[])
+        # Cooperative predicates stop new watcher ticks before accepted work is
+        # joined. Neither the event nor the predicate is a completion receipt.
+        self.runner._running = False
+        self.runner._shutdown_event.set()
         self.cron_stop.set()
         self.cron.stop()
         await join_thread(self.cron_thread)
         await join_thread(self.housekeeping)
         await self._join_work()
-        self.runner._running = False
         from gateway.run_owned_resources import close_authorities, close_adapters, close_agent_resources, close_tool_resources
         await close_authorities(self.runner)
         await close_agent_resources(self.runner)

@@ -435,7 +435,8 @@ class GatewayAdapterLifecycleMixin:
         if not isinstance(tasks, set):
             tasks = self._background_tasks = set()
         tasks.add(task)
-        task.add_done_callback(tasks.discard)
+        from gateway.run_owned_watchers import observe_background
+        observe_background(self, task, tasks)
         return task
 
     @staticmethod
@@ -473,21 +474,30 @@ class GatewayAdapterLifecycleMixin:
         event* happening to call ``_ensure_...`` (#90386). This is the supervisor telling its caller "I am
         done; the invariant is yours now", which is a thing only the supervisor knows.
         """
+        from gateway.run_owned_watchers import prepare_supervised, retain_failure
+        owned_source = prepare_supervised(self)
         # Spawn timestamp lets ``_done`` tell a rapid crash-loop from a healthy-run-then-crash.
         _started = time.monotonic()
         # No create_task kwargs (test doubles mock a narrow signature); Context().run isolates instead.
         task = Context().run(lambda: asyncio.create_task(coro_factory()))
         # PERMANENT watcher: the scale-to-zero idle check ignores it (else busy forever).
         task._hermes_supervised_watcher = True  # type: ignore[attr-defined]
-        self._retain_background_task(task)
+        if owned_source is None:
+            self._retain_background_task(task)
+        else:
+            # The original done callback keeps failed/cancelled managed work.
+            self._background_tasks.add(task)
         if on_spawn is not None:
             # Record the live handle NOW so external trackers don't point at a dead prior task.
             try:
                 on_spawn(task)
-            except Exception:  # pragma: no cover - defensive; a tracker must never kill the spawn
-                logger.debug("on_spawn callback for %s raised", name, exc_info=True)
+            except Exception as error:  # pragma: no cover - defensive; keep unmanaged tracker policy
+                if not retain_failure(owned_source, self, task, error):
+                    logger.debug("on_spawn callback for %s raised", name, exc_info=True)
 
         def _done(t):
+            if retain_failure(owned_source, self, t):
+                return
             self._background_tasks.discard(t)
             if t.cancelled():
                 return

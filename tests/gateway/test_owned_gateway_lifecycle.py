@@ -93,7 +93,7 @@ def test_entry_cannot_replace_the_refusal_with_a_mutated_callback(source):
 def bound_settlement(source):
     runner = SimpleNamespace(
         _owned_gateway_source=source, session_runtime_descriptor={"state": "ready"},
-        _running=True, _background_tasks=set(),
+        _running=True, _background_tasks=set(), _shutdown_event=asyncio.Event(),
     )
     source.runner = runner
     source.task = asyncio.current_task()
