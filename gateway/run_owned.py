@@ -140,4 +140,5 @@ class ManagedEntry:
         return main(self.source)
 
 def prepare_entry(source):
-    return ManagedEntry(source)
+    from gateway.owned_entry_construction import prepare_entry as prepare_original
+    return prepare_original(source)

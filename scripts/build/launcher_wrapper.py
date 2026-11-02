@@ -136,6 +136,7 @@ def _select_retained_bootstrap(here, argv):
     owned_api = importlib.import_module("hermes_owned_gateway")
     try:
         source = owned_api.attach(value, policy_api.original_plan_bytes(value))
+        owned_api.prepare_lifecycle_entry(source)
         owned_api.require_lifecycle_available(source)
     except owned_api.OwnedGatewayUnknown:
         owned_api.current(value).hold_unknown()

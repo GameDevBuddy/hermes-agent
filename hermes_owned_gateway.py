@@ -97,6 +97,11 @@ class OwnedGatewaySource:
         self.cron_closing = self.cron_work_joined = self.cron_closed = False
         self.cron_pool_join_attempted = False
         self.entry = None
+        self._entry_credit = 0
+        self._entry_state = "unprepared"
+        self._entry_inputs = self._entry_creator = self._entry_initializer = None
+        self._entry_original = self._entry_allocator_result = self._entry_callbacks = None
+        self._entry_error = self._entry_traceback = None
 
     def unknown(self, reason):
         with self._state_lock:
@@ -291,14 +296,18 @@ def current(contract):
 def run_foreground(source):
     try:
         source.require_attached(source.contract)
-        from gateway.run_owned import ManagedEntry
-        if type(source.entry) is not ManagedEntry or source.entry.source is not source:
-            raise OwnedGatewayUnknown("actual-coupled-managed-entry-required")
-        return source.entry.run()
+        from gateway.owned_entry_construction import require_prepared_entry
+        return require_prepared_entry(source).run()
     except BaseException as error:
         source.unknown(str(error))
         logging.getLogger(__name__).exception("Original managed foreground is held")
         source.hold_unknown()
+
+
+def prepare_lifecycle_entry(source):
+    """Retain the original metadata constructor; this grants no startup rights."""
+    from gateway.run_owned import prepare_entry
+    return prepare_entry(source)
 
 
 def require_lifecycle_available(source):

@@ -325,6 +325,7 @@ def test_retained_wrapper_selects_policy_before_bootstrap_and_defers_hooks(prepa
 
     owned = SimpleNamespace(attach=Mock(side_effect=attach), current=lambda contract: source,
                             run_foreground=target, require_lifecycle_available=Mock(),
+                            prepare_lifecycle_entry=Mock(),
                             OwnedGatewayUnknown=RuntimeError)
 
     def load(name):
@@ -352,6 +353,7 @@ def test_retained_wrapper_selects_policy_before_bootstrap_and_defers_hooks(prepa
     assert fake_sys.argv == [argv[0], *argv[3:]]
     target.assert_called_once_with(source)
     owned.require_lifecycle_available.assert_called_once_with(source)
+    owned.prepare_lifecycle_entry.assert_called_once_with(source)
 
 
 def test_unavailable_owned_lifecycle_refuses_before_configure_or_bootstrap(prepared, monkeypatch):
@@ -380,6 +382,7 @@ def test_unavailable_owned_lifecycle_refuses_before_configure_or_bootstrap(prepa
         if name == "hermes_owned_gateway":
             return SimpleNamespace(attach=Mock(return_value=source), current=lambda contract: source,
                                    require_lifecycle_available=owned.require_lifecycle_available,
+                                   prepare_lifecycle_entry=Mock(),
                                    OwnedGatewayUnknown=owned.OwnedGatewayUnknown)
         raise AssertionError("unavailable lifetime imported bootstrap or gateway")
 
