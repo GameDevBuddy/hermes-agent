@@ -63,7 +63,7 @@ class Agent(SessionPersistenceMixin):
 
 
 class ProducerCase(CallCase):
-    def __init__(self, monkeypatch, tmp_path):
+    def __init__(self, monkeypatch, tmp_path, *, claim_after_context=False):
         monkeypatch.setattr(context_fixture, "Input", BlockingInput)
         monkeypatch.setattr(context_fixture, "Output", Output)
         super().__init__(monkeypatch, tmp_path)
@@ -77,14 +77,10 @@ class ProducerCase(CallCase):
         self.db = SessionDB(tmp_path / "producer-state.db")
         self.db.create_session("s", "test")
         self.epoch = begin_runtime_epoch(self.db, instance_id="context-instance")
-        admit_session_input(self.db, epoch=self.epoch, principal_id="context-fixture", session_id="s",
-                            request_id="producer-input", payload={"text": "declared source fixture"})
-        self.claim = claim_session_input(self.db, epoch=self.epoch, session_id="s")
-        assert self.db.acquire_session_turn_lease("s", "producer-turn", wait_seconds=0)
+        self.claim_after_context = claim_after_context
         self.authority.db, self.authority.epoch = self.db, self.epoch
-        self.live.event_stream.execution = {"authority_epoch": self.epoch,
-            "execution_generation": self.claim["generation"], "admission_id": self.claim["admission_id"]}
-        self.authority.executing["s"] = self.claim["generation"]
+        if not claim_after_context:
+            self._claim_original_turn()
         self.agent, self.worker_error, self.control_error = Agent(self.db), None, None
         self.result = self.message = None
         self.canonical_frames = []
@@ -94,6 +90,15 @@ class ProducerCase(CallCase):
         self.control_thread = threading.Thread(target=self._control, name="source-fixture-original-control")
         self.worker_thread = threading.Thread(target=self._worker, name="source-fixture-original-agent")
         RETAINED.append(self)
+
+    def _claim_original_turn(self):
+        admit_session_input(self.db, epoch=self.epoch, principal_id="context-fixture", session_id="s",
+                            request_id="producer-input", payload={"text": "declared source fixture"})
+        self.claim = claim_session_input(self.db, epoch=self.epoch, session_id="s")
+        assert self.db.acquire_session_turn_lease("s", "producer-turn", wait_seconds=0)
+        self.live.event_stream.execution = {"authority_epoch": self.epoch,
+            "execution_generation": self.claim["generation"], "admission_id": self.claim["admission_id"]}
+        self.authority.executing["s"] = self.claim["generation"]
 
     def append(self, raw):
         with self.input.condition:
@@ -172,6 +177,8 @@ class ProducerCase(CallCase):
         assert staged.get("error") is None
         self.append(line(self.frame()))
         await self.notification("native_context_bound")
+        if self.claim_after_context:
+            self._claim_original_turn()
         self.offered = asyncio.Event()
         self.offer_task = self.loop.create_task(self.offer())
         await self.offered.wait()

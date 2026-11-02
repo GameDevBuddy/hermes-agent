@@ -64,7 +64,8 @@ class AppCall:
                 on_loop = False
             worker = self if not on_loop and threading.current_thread() is self.worker_thread else None
             inputs = self.original.connection.connection, self.original.selection.ref
-            current = require_context(*inputs) if worker is None else require_context(*inputs, original_call=worker)
+            consumer = self if on_loop else worker
+            current = require_context(*inputs) if consumer is None else require_context(*inputs, original_call=consumer)
             if current is not self.context or not current.selection.same_selection(self.original.selection):
                 refuse("native_original_app_call_context_changed")
         if self.wire is not None and self.wire != _wire(self.original, self.request):
@@ -108,7 +109,7 @@ async def send(call):
     try:
         call.require_current()
         from gateway.native_app_context import require_context
-        call.context = require_context(call.original.connection.connection, call.original.selection.ref)
+        call.context = require_context(call.original.connection.connection, call.original.selection.ref, original_call=call)
         call.require_current()
         call.wire = _wire(call.original, call.request)
         call.digest = hashlib.sha256(call.wire.encode("ascii")).hexdigest()

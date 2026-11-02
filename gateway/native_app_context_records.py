@@ -60,6 +60,25 @@ def source_for_original_worker(connection, call):
     return source, original
 
 
+def source_for_original_call(connection, call):
+    # Original-loop metadata access may precede the private per-call bind. It
+    # cannot issue an Origin; private prepare still requires authenticated ACK.
+    from gateway.native_app_call import AppCall
+    from gateway.native_source_construction import require_constructed
+    source, original = source_for(connection)
+    if type(call) is not AppCall:
+        refuse("native_original_app_call_missing")
+    require_constructed(call)
+    call.original.require_call()
+    if (call.original.connection is not original or call.original.connection.connection is not connection
+            or call.slot._source_constructions.get("app_call") is not call
+            or call.original.request is not call.request or call.error is not None
+            or call.original._source_construction.creator[0] is not call.worker_thread
+            or call.original.assistant._source_construction.creator[0] is not call.worker_thread):
+        refuse("native_original_app_call_changed")
+    return source, original
+
+
 def source_for_owner(connection, owner):
     # This grants context metadata access, never a per-call Origin or native permission.
     from agent.tool_commit_owner import ToolCommitOwner
@@ -122,7 +141,10 @@ class ContextStage:
         if original_call is not None and source_owner is not None:
             refuse("native_original_context_consumer_ambiguous")
         if original_call is not None:
-            source, original = source_for_original_worker(c, original_call)
+            if s.loop_thread is threading.current_thread():
+                source, original = source_for_original_call(c, original_call)
+            else:
+                source, original = source_for_original_worker(c, original_call)
         elif source_owner is not None:
             source, original = source_for_owner(c, source_owner)
         else:
@@ -134,7 +156,8 @@ class ContextStage:
                 or self.error is not None or s._app_context_error is not None
                 or not selected.current() or s._app_context_stages.get(self.nonce) is not self
                 or s._app_context_slots.get((id(c), selected.ref.session_id)) != self.nonce
-                or generation(selected) != self.generation or self.params["nonce"] != self.nonce):
+                or (original_call is None and source_owner is None and generation(selected) != self.generation)
+                or self.params["nonce"] != self.nonce):
             refuse()
         from gateway.session_native_context import _selected
         inputs = {name: value for name, value in self.params.items() if name != "nonce"}
