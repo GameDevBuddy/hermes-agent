@@ -102,6 +102,12 @@ class OwnedGatewaySource:
         self._entry_inputs = self._entry_creator = self._entry_initializer = None
         self._entry_original = self._entry_allocator_result = self._entry_callbacks = None
         self._entry_error = self._entry_traceback = None
+        self.loop_driver = None
+        self._startup_credit = 0
+        self._startup_error = self._startup_traceback = None
+        self._loop_construction = self._runner_construction = self._settlement_construction = None
+        self._original_loop_construction = self._original_runner_construction = None
+        self._original_settlement_construction = None
 
     def unknown(self, reason):
         with self._state_lock:
@@ -179,6 +185,9 @@ class OwnedGatewaySource:
         import asyncio
         from gateway.run import GatewayRunner
         self.require_attached(self.contract)
+        if self._original_runner_construction is not None:
+            from gateway.owned_startup_construction import require_original
+            require_original(self, "runner", runner)
         task, loop = asyncio.current_task(), asyncio.get_running_loop()
         if type(runner) is not GatewayRunner or task is None or self.runner is not None:
             raise self.unknown("canonical-runner-and-original-task-required")

@@ -131,3 +131,25 @@ def test_actual_foreground_consumer_refuses_a_changed_callback_before_running_it
         owned.run_foreground(source)
     assert calls == [] and source.phase == "unknown"
     assert source._entry_original is entry and source._entry_allocator_result is entry
+
+
+def test_swallowed_allocator_reentry_refuses_before_the_original_initializer(source, monkeypatch):
+    values, initialized, failures = [], [], []
+
+    def create(cls):
+        try:
+            owned.prepare_lifecycle_entry(source)
+        except owned.OwnedGatewayUnknown as error:
+            failures.append(error)
+        value = object.__new__(cls)
+        values.append(value)
+        return value
+
+    monkeypatch.setattr(run_owned.ManagedEntry, "__new__", staticmethod(create))
+    monkeypatch.setattr(run_owned.ManagedEntry, "__init__", lambda *args: initialized.append(args))
+    with pytest.raises(owned.OwnedGatewayUnknown, match="construction-failed"):
+        owned.prepare_lifecycle_entry(source)
+    assert len(values) == len(failures) == 1
+    assert source._entry_original is source._entry_allocator_result is values[0]
+    assert source._entry_error is failures[0] and source._entry_credit == 4096
+    assert initialized == [] and source.entry is None

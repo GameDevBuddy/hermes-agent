@@ -20,22 +20,29 @@ def main(source):
     _require_original_source(source)
     from hermes_owned_gateway import require_lifecycle_available
     require_lifecycle_available(source)
-    loop = asyncio.new_event_loop()
-    source.loop_driver = loop
-    asyncio.set_event_loop(loop)
+    from gateway.owned_startup_construction import construct_loop, remember_failure, require_original
+    loop = None
     try:
+        loop = construct_loop(source)
+        require_original(source, "loop", loop)
+        asyncio.set_event_loop(loop)
         from gateway.run import _guard_corrupt_user_config
         from gateway.run_bootstrap import start_gateway
         _guard_corrupt_user_config()
         result = loop.run_until_complete(start_gateway(owned_source=source))
         if result is not True or source.phase != "closed" or asyncio.all_tasks(loop):
             raise OwnedGatewayUnknown("canonical-owned-lifetime-not-settled")
+        require_original(source, "loop", loop)
         loop.close()
         return 0
     except BaseException as error:
         # No asyncio.Runner.close cancellation funnel or service exit/restart.
+        first = remember_failure(source, error)
         logger.exception("Canonical managed entry failed; retaining its original resources")
-        loop.run_until_complete(source.retain_unknown(str(error)))
+        if loop is not None and not loop.is_closed():
+            loop.run_until_complete(source.retain_unknown(str(first)))
+        source.unknown(str(first))
+        source.hold_unknown()
 
 
 def _claim_profile_ownership(config):
@@ -60,7 +67,7 @@ async def start_managed(source, config=None):
     from gateway import run as canonical
     from gateway import run_bootstrap as boot
     from gateway.run_runtime import initialize_gateway_runtime, start_gateway_runtime_api, publish_gateway_runtime_ready
-    from gateway.run_owned_shutdown import ManagedSettlement
+    from gateway.owned_startup_construction import construct_runner, construct_settlement
     os.environ["HERMES_EXEC_ASK"] = "1"
     os.environ.setdefault("AI_AGENT", "hermes-agent")
     os.environ.setdefault("HERMES_AGENT", "true")
@@ -75,12 +82,11 @@ async def start_managed(source, config=None):
     boot._start_gateway_configure_logging(0)
     from gateway.run_startup import recover_left_core_at_gateway_start
     await asyncio.to_thread(recover_left_core_at_gateway_start)
-    runner = canonical.GatewayRunner(config)
+    runner = construct_runner(source, config)
     from gateway.native_source_runtime import capture_original_runner
     capture_original_runner(runner, asyncio.current_task(), asyncio.get_running_loop())
     source.bind_runner(runner)
-    settlement = ManagedSettlement(source, runner)
-    source.settlement = settlement
+    settlement = construct_settlement(source, runner)
     try:
         await initialize_gateway_runtime(runner)
         canonical._enable_multiplex_log_routing(runner.config)
@@ -118,8 +124,10 @@ async def start_managed(source, config=None):
         return True
     except BaseException as error:
         # Includes startup failures: ownership and partial startup resources stay held.
+        from gateway.owned_startup_construction import remember_failure
+        first = remember_failure(source, error)
         logger.exception("Canonical managed lifecycle failed; retaining partial startup resources")
-        await source.retain_unknown(str(error))
+        await source.retain_unknown(str(first))
 
 
 class ManagedEntry:

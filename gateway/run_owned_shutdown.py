@@ -75,6 +75,11 @@ class ManagedSettlement:
 
     def require_task(self):
         self.source.require_bound(self.runner)
+        if self.source._original_settlement_construction is not None:
+            from gateway.owned_startup_construction import require_original
+            require_original(self.source, "settlement", self)
+            if self.source.settlement is not self:
+                raise OwnedGatewayUnknown("original-settlement-publication-changed")
         if self.task is not asyncio.current_task() or self.loop is not asyncio.get_running_loop():
             raise OwnedGatewayUnknown("different-normal-settlement-task")
 

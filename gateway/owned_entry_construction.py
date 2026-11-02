@@ -58,6 +58,8 @@ def _initialize(source):
     if source._entry_original is not None:
         raise OwnedGatewayUnknown("original-managed-entry-construction-displaced")
     source._entry_original = value  # Retain actual partial self BEFORE its initializer.
+    if source._entry_error is not None:
+        raise source._entry_error
     if type(value) is not ManagedEntry or vars(value):
         raise OwnedGatewayUnknown("foreign-or-preowned-managed-entry-allocation")
     source._entry_initializer(value, source)

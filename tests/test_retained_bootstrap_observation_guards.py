@@ -185,6 +185,7 @@ def test_actual_wrapper_keeps_v2_availability_refusal_before_any_startup(observe
         if name == "hermes_owned_gateway":
             return SimpleNamespace(attach=attach, current=lambda contract: source,
                                    require_lifecycle_available=owned.require_lifecycle_available,
+                                   prepare_lifecycle_entry=Mock(),
                                    OwnedGatewayUnknown=owned.OwnedGatewayUnknown)
         raise AssertionError("observation policy imported a runtime before availability")
 
