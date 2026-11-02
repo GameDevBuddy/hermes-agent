@@ -600,6 +600,8 @@ class SessionDB(
         finally:
             del caller
         self._lock = threading.Lock()
+        from hermes_state_native_lease import NativeReadGate
+        self._native_read_gate = NativeReadGate()
         # Read-path split (WAL only): reads borrow from a BOUNDED read-only pool so they
         # never queue behind writer flushes on self._lock (see _read_ctx); unbounded
         # per-thread connections pinned fds for the process lifetime and hit EMFILE.
@@ -933,6 +935,12 @@ class SessionDB(
 
     @contextmanager
     def _read_ctx(self, *, reopen: bool = True) -> Iterator[sqlite3.Connection]:
+        from hermes_state_native_lease import read_context
+        with read_context(self, lambda: self._ordinary_read_ctx(reopen=reopen)) as conn:
+            yield conn
+
+    @contextmanager
+    def _ordinary_read_ctx(self, *, reopen: bool = True) -> Iterator[sqlite3.Connection]:
         """Yield a connection for read-only statements: a pooled read-only
         connection with NO lock under WAL; otherwise (non-WAL, open failure,
         ceiling reached) the writer connection under self._lock — deliberate
@@ -1040,23 +1048,10 @@ class SessionDB(
             # raising a sticky DeletedWalGenerationError that permanently refuses
             # later writes (#105567). Inside the lock the probe only ever sees the
             # stable post-close state (identity cleared → adopt / reopen path).
-            fn_started = False
+            from hermes_state_transaction import WriteAttempt, execute_once
+            attempt = WriteAttempt()
             try:
-                with self._lock:
-                    self._raise_if_db_replaced()
-                    if self._conn is None:  # close() raced this writer
-                        self._reopen_after_close_locked(context="write")
-                    self._conn.execute("BEGIN IMMEDIATE")
-                    try:
-                        fn_started = True
-                        result = fn(self._conn)
-                        self._conn.commit()
-                    except BaseException:
-                        try:
-                            self._conn.rollback()
-                        except Exception:
-                            pass
-                        raise
+                result = execute_once(self, fn, attempt)
                 # Success — periodic best-effort checkpoint + FTS merge.
                 self._write_count += 1
                 if self._write_count % self._CHECKPOINT_EVERY_N_WRITES == 0:
@@ -1102,7 +1097,7 @@ class SessionDB(
                             "process; the database itself is healthy)"
                         ) from exc
                     if (
-                        _DISK_IO_ERROR_MARKER in err_msg and not fn_started and not ioerr_begin_retried
+                        _DISK_IO_ERROR_MARKER in err_msg and not attempt.started and not ioerr_begin_retried
                         and self._sleep_before_write_retry(deadline, patience_s)
                     ):
                         # Retry on the SAME connection: close()+reopen would cancel this process's

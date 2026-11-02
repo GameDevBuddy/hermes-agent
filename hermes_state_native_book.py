@@ -131,5 +131,8 @@ def guarded_write(book, callback):
 
 
 def require_no_local_native_hold(db):
+    gate = getattr(db, "_native_read_gate", None)
+    if gate is not None and gate.lease is not None:
+        raise NativeSQLFailure("native_writer_original_database_retirement_held")
     if getattr(db, "_native_pin_init_consumed", False):
         raise NativeSQLFailure("native_sql_original_database_retirement_held")
