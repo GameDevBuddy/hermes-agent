@@ -56,6 +56,8 @@ class OwnedGatewaySource:
         self.phase, self.error = "attaching", None
         self._state_lock = threading.RLock()
         self._attach_attempt = None
+        self._original_job = None
+        self._attach_error = self._attach_traceback = None
         self._transport_credit = 0
         self._transport_attempt = self._transport_record = self._transport_error = None
         self._transport_original_record = None
@@ -141,12 +143,24 @@ class OwnedGatewaySource:
             with self._state_lock:
                 if self is not _CURRENT or self.phase != "attaching" or self.job is not None:
                     raise self.unknown("original-attach-state-required")
-                self.job = JobAssociation(frame["jobHandle"])
-                if self is not _CURRENT or self.phase != "attaching":
+                if JobAssociation.__new__ is not object.__new__ or self._original_job is not None:
+                    raise OwnedGatewayUnknown("original-job-constructor-required")
+                job = object.__new__(JobAssociation)
+                # Query-only local custody. Retain partial self before its sole
+                # initializer; this reference never grants native authority.
+                self._original_job = job
+                JobAssociation.__init__(job, frame["jobHandle"])
+                if (self is not _CURRENT or self.phase != "attaching"
+                        or self._original_job is not job or self.job is not None):
                     raise self.unknown("original-attach-state-required")
+                self.job = job
                 self.phase = "attached"
-        except Exception as error:
-            raise self.unknown(str(error)) from error
+        except BaseException as error:
+            if self._attach_error is None:
+                self._attach_error, self._attach_traceback = error, error.__traceback__
+            logging.getLogger(__name__).error("Original Job attachment failed; retaining its partial association",
+                exc_info=(type(self._attach_error), self._attach_error, self._attach_traceback))
+            raise self.unknown(str(self._attach_error)) from self._attach_error
 
     def require_attached(self, contract):
         if self is not _CURRENT or self.contract is not contract or self.phase != "attached" or self.job is None:
@@ -325,9 +339,9 @@ def prepare_lifecycle_entry(source):
 
 
 def require_lifecycle_available(source):
-    """The unavailable body must refuse before bootstrap can start any workers."""
-    source.require_attached(source.contract)
-    raise OwnedGatewayUnknown("canonical-managed-normal-lifecycle-not-composed")
+    """Require the original caller and implemented body before any workers."""
+    from gateway.run_owned_admission import require_original_entry
+    require_original_entry(source)
 
 
 def active(runner=None):

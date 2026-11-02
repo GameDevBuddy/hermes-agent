@@ -1,4 +1,4 @@
-"""Canonical managed lifecycle implementation; launch admission remains closed."""
+"""Canonical managed lifecycle, admitted only by the original sealed caller."""
 from __future__ import annotations
 
 import asyncio
@@ -143,6 +143,9 @@ class ManagedEntry:
 
     def run(self):
         _require_original_source(self.source)
+        from gateway.owned_entry_construction import require_prepared_entry
+        if require_prepared_entry(self.source) is not self:
+            raise OwnedGatewayUnknown("canonical-managed-normal-lifecycle-not-composed:foreign-entry")
         from hermes_owned_gateway import require_lifecycle_available
         require_lifecycle_available(self.source)
         return main(self.source)

@@ -137,13 +137,13 @@ def test_plan_alone_and_second_attach_are_not_a_source(owned):
 @pytest.mark.parametrize("first", ["success", "invalid-binding", "query-failure", "unknown"])
 def test_same_source_cannot_repeat_its_attach_attempt(owned, first):
     constructions = []
-    association = windows.JobAssociation
+    association = windows.JobAssociation.__init__
 
-    def associate(handle):
+    def associate(value, handle):
         constructions.append(handle)
-        return association(handle)
+        association(value, handle)
 
-    owned.monkeypatch.setattr(windows, "JobAssociation", associate)
+    owned.monkeypatch.setattr(windows.JobAssociation, "__init__", associate)
     initial = dict(owned.frame)
     replay = dict(owned.frame, jobHandle=99)
     if first == "invalid-binding":
@@ -287,3 +287,31 @@ def test_retained_runner_cannot_fall_back_to_unmanaged_after_source_disappears(m
     runner = SimpleNamespace(_owned_gateway_source=object())
     with pytest.raises(subject.OwnedGatewayUnknown, match="association-missing"):
         subject.active(runner)
+
+
+@pytest.mark.parametrize("first", [ValueError("original Job initializer failed"),
+                                  SystemExit("original Job initializer refused")])
+def test_job_initializer_failure_retains_original_partial_self_and_first_error(owned, first, monkeypatch):
+    initialize = windows.JobAssociation.__init__
+    actual = []
+
+    def fail(value, handle):
+        source = subject._CURRENT
+        assert source._original_job is value and source.job is None
+        actual.append(value)
+        initialize(value, handle)
+        raise first
+
+    monkeypatch.setattr(windows.JobAssociation, "__init__", fail)
+    with pytest.raises(subject.OwnedGatewayUnknown) as caught:
+        owned.select()
+    source = subject._CURRENT
+    assert caught.value.__cause__ is first and source._attach_error is first
+    assert source._attach_traceback is first.__traceback__
+    assert source._original_job is actual[0] and actual[0]._api is owned.api
+    assert source.job is None and source.phase == "unknown"
+    before = list(owned.api.queries)
+    with pytest.raises(subject.OwnedGatewayUnknown):
+        source.attach()
+    assert source._original_job is actual[0] and source._attach_error is first
+    assert owned.api.queries == before
