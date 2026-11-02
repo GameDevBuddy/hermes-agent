@@ -1185,6 +1185,13 @@ class GatewayStartupMixin:
     async def _start_recover_previous_run(self) -> None:
         """Plugins, relay, hooks, then crash/clean-exit recovery of processes and sessions."""
         from gateway.run import _hermes_home
+        from hermes_owned_gateway import active
+        from gateway.run_owned_recovery import refuse_unowned_recovery, restore_legacy_process_work
+        source = active(self)
+        if source is not None:
+            # Deliberately outside best-effort recovery: no prior process is
+            # adopted, probed, replayed or reaped on the retained managed route.
+            refuse_unowned_recovery(source, self)
         self._start_register_plugins_relay_hooks()
         # Plugins that load later (force re-discovery, install/enable nudge) re-wire live adapters (#87770).
         with _log_suppressed(logging.WARNING, "plugin re-wire subscription failed", exc_info=True):
@@ -1194,17 +1201,8 @@ class GatewayStartupMixin:
         # Recover background processes from checkpoint (crash recovery). ``_checkpoint_path`` is
         # scope-relative, so a served secondary's turn wrote ITS home's processes.json; recover each
         # served profile's file under its scope or those processes are never re-adopted.
-        with _log_suppressed(logging.WARNING, "Process checkpoint recovery: %s"):
-            from tools.process_registry import process_registry
-            recovered = process_registry.recover_from_checkpoint()
-            recovered += self._recover_secondary_process_checkpoints(process_registry)
-            if recovered:
-                logger.info("Recovered %s background process(es) from previous run", recovered)
-        # The gateway owns delegation state: replay durable completions the previous
-        # process never delivered. Explicit here, never at tools import (clients).
-        with _log_suppressed(logging.WARNING, "Could not restore async delegation completions: %s"):
-            from tools.async_delegation import restore_undelivered_completions
-            restore_undelivered_completions(process_registry.completion_queue)
+        if source is None:
+            restore_legacy_process_work(self)
         # Recover the turns the last process left marked (in flight, or reply not yet ledgered).
         # SKIP after a clean exit — the previous process already drained.
         _clean_marker = _hermes_home / ".clean_shutdown"

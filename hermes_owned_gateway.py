@@ -333,6 +333,10 @@ def require_lifecycle_available(source):
 def active(runner=None):
     source = _CURRENT
     if source is None:
+        import hermes_retained_bootstrap as bootstrap
+        if (bootstrap.current() is not None
+                or (runner is not None and getattr(runner, "_owned_gateway_source", None) is not None)):
+            raise OwnedGatewayUnknown("retained-original-source-association-missing")
         return None
     if runner is not None and source.runner is not runner:
         raise OwnedGatewayUnknown("different-canonical-runner")

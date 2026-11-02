@@ -504,6 +504,10 @@ async def recover_bot_mailbox(authority):
 
 
 async def start_gateway_runtime_api(runner):
+    from hermes_owned_gateway import active
+    owned_source = active(runner)
+    if owned_source is not None:
+        owned_source.require_bound(runner)
     from gateway import run_api
     from gateway.webapp_listener import (
         STARTING, BrowserCredentialError, browser_session_token, dial_origin, listener_plan, register_control_verbs,
@@ -523,6 +527,10 @@ async def start_gateway_runtime_api(runner):
         runner.session_api = await (run_api.start_gateway_api(runner, host=host, port=port, webapp=webapp)
                                     if webapp is not None else run_api.start_gateway_api(runner))
     except (Exception, SystemExit) as exc:
+        if owned_source is not None:
+            # Original failed listener/credential state remains retained. Never
+            # rotate its token or create a replacement reader after failure.
+            raise
         if webapp is None:
             raise
         # The Webapp's listener could not start (port taken, address unavailable, its browser credential

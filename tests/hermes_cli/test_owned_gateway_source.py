@@ -272,3 +272,18 @@ def test_uncomposed_canonical_route_refuses_before_constructing_gateway(owned):
     with pytest.raises(subject.OwnedGatewayUnknown, match="not-composed"):
         main(source)
     assert not owned.output.getvalue()
+
+
+def test_installed_bootstrap_cannot_fall_back_after_original_source_disappears(monkeypatch):
+    monkeypatch.setattr(subject, "_CURRENT", None)
+    monkeypatch.setattr(bootstrap, "_BOUND", object())
+    with pytest.raises(subject.OwnedGatewayUnknown, match="association-missing"):
+        subject.active()
+
+
+def test_retained_runner_cannot_fall_back_to_unmanaged_after_source_disappears(monkeypatch):
+    monkeypatch.setattr(subject, "_CURRENT", None)
+    monkeypatch.setattr(bootstrap, "_BOUND", None)
+    runner = SimpleNamespace(_owned_gateway_source=object())
+    with pytest.raises(subject.OwnedGatewayUnknown, match="association-missing"):
+        subject.active(runner)
