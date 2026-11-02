@@ -10,24 +10,33 @@ import '../styles.css'
 import { QueryClientProvider } from '@tanstack/react-query'
 import { createRoot } from 'react-dom/client'
 import { MemoryRouter } from 'react-router'
+
 import App from '../app'
 import { RootErrorBoundary } from '../components/error-boundary'
 import { HapticsProvider } from '../components/haptics-provider'
 import { RootTooltipProvider } from '../components/ui/tooltip'
 import { ProfileI18nProvider } from '../i18n/profile-provider'
-import { queryClient } from '../lib/query-client'
 import { installClipboardShim } from '../lib/clipboard'
+import { queryClient } from '../lib/query-client'
 import { ThemeProvider } from '../themes/context'
+
 import { type GameDevBuddyAiHost, gameDevBuddyHost } from './host'
+import { GameDevBuddySessionReporter } from './session-reporter'
 
 /** Mount the complete contribution-driven client directly in GameDevBuddy's
  * activity area. Its React runtime is bundled independently, so other app
  * modules retain their own supported React version. No page or iframe loads. */
 export function mount(host: GameDevBuddyAiHost): { dispose: () => void } {
-  if (gameDevBuddyHost() !== host) {throw new Error('GameDevBuddy AI host must be bound before importing the client')}
+  if (gameDevBuddyHost() !== host) {
+    throw new Error('GameDevBuddy AI host must be bound before importing the client')
+  }
+
   // The host owns the document's Clipboard API; our copy primitives already
   // use the supported browser path without replacing it for other modules.
-  if (!gameDevBuddyHost()) {installClipboardShim()}
+  if (!gameDevBuddyHost()) {
+    installClipboardShim()
+  }
+
   const root = createRoot(host.element)
   root.render(
     <RootErrorBoundary>
@@ -36,7 +45,10 @@ export function mount(host: GameDevBuddyAiHost): { dispose: () => void } {
           <ThemeProvider>
             <HapticsProvider>
               <RootTooltipProvider>
-                <MemoryRouter initialEntries={[host.route || '/']}><App /></MemoryRouter>
+                <MemoryRouter initialEntries={[host.route || '/']}>
+                  <App />
+                  <GameDevBuddySessionReporter />
+                </MemoryRouter>
               </RootTooltipProvider>
             </HapticsProvider>
           </ThemeProvider>
@@ -44,6 +56,7 @@ export function mount(host: GameDevBuddyAiHost): { dispose: () => void } {
       </QueryClientProvider>
     </RootErrorBoundary>
   )
+
   return { dispose: () => root.unmount() }
 }
 
@@ -51,6 +64,8 @@ export function mount(host: GameDevBuddyAiHost): { dispose: () => void } {
 // compiled application's imports. This exports the same typed mount contract;
 // it does not create a frame, navigate a page or expose backend credentials.
 declare global {
-  interface Window { __GDB_AI_CLIENT__?: { mount: typeof mount } }
+  interface Window {
+    __GDB_AI_CLIENT__?: { mount: typeof mount }
+  }
 }
 window.__GDB_AI_CLIENT__ = { mount }

@@ -11,10 +11,20 @@ export interface GameDevBuddyAiHost {
   fileUrl: (ticket: string) => string
   openAccount: () => void
   isActive: () => boolean
+  /** Presentation metadata only. Native selection/approval stay in the host App. */
+  onSessionChange?: (session: GameDevBuddySessionView | null) => void
+}
+
+export interface GameDevBuddySessionView {
+  sessionId: string
+  profile: string
+  connectionId: string
 }
 
 declare global {
-  interface Window { __GDB_AI_HOST__?: GameDevBuddyAiHost }
+  interface Window {
+    __GDB_AI_HOST__?: GameDevBuddyAiHost
+  }
 }
 
 export function gameDevBuddyHost(): GameDevBuddyAiHost | undefined {
@@ -33,5 +43,6 @@ export function desktopSurfaceBody(): HTMLElement {
 /** Document-level input must stay with its owning GameDevBuddy surface. */
 export function ownsDesktopEvent(event: Event): boolean {
   const host = gameDevBuddyHost()
+
   return !host || (host.isActive() && event.target instanceof Node && host.element.contains(event.target))
 }
