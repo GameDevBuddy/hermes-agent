@@ -108,6 +108,11 @@ class OwnedGatewaySource:
         self._loop_construction = self._runner_construction = self._settlement_construction = None
         self._original_loop_construction = self._original_runner_construction = None
         self._original_settlement_construction = None
+        self.environment_probe = self._original_environment_probe = None
+        self._environment_probe_constructor = None
+        self._environment_probe_credit = 0
+        self._environment_probe_state = "unprepared"
+        self._environment_probe_error = self._environment_probe_traceback = None
 
     def unknown(self, reason):
         with self._state_lock:

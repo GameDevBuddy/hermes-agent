@@ -890,6 +890,9 @@ class GatewayStartupMixin:
 
         See #66892.
         """
+        source = getattr(self, "_owned_gateway_source", None)
+        if source is not None:
+            source.require_bound(self)
         with _log_suppressed(logging.DEBUG, "Failed to start gateway loop heartbeat", exc_info=True):
             _existing_hb = getattr(self, "_loop_heartbeat_task", None)
             if _existing_hb is not None and not _existing_hb.done():
@@ -898,6 +901,8 @@ class GatewayStartupMixin:
                 loop_heartbeat_forever(
                     interval_s=DEFAULT_HEARTBEAT_INTERVAL_S,
                     start_time=getattr(self, "_gateway_started_at", 0.0),
+                    should_continue=(lambda: self._running)
+                    if source is not None else None,
                 )
             )
             # PERMANENT watcher tag so the scale-to-zero idle check doesn't count it as busy forever.

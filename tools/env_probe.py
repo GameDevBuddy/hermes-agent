@@ -59,6 +59,15 @@ def _run(cmd: list[str], timeout: float = 3.0) -> tuple[int, str, str]:
     captured handles and outlives its parent; with OS pipes ``communicate()``'s reader
     threads block until that grandchild closes the write end (a warm probe could hang
     ~28 min holding ``_CACHE_LOCK``). Temp files make ``wait()`` cover only the child."""
+    from hermes_owned_gateway import active
+    source = active()
+    if source is not None:
+        from tools.env_probe_owned import fail, original_owner
+        try:
+            return original_owner(source).run_command(cmd, timeout)
+        except BaseException as error:
+            fail(source, error)
+            raise
     try:
         with tempfile.TemporaryFile() as out_f, tempfile.TemporaryFile() as err_f:
             try:
@@ -222,6 +231,17 @@ def _ensure_probe_started() -> None:
     """Start the probe worker if it isn't running and hasn't finished."""
     global _PROBE_THREAD
     with _CACHE_LOCK:
+        from hermes_owned_gateway import active
+        source = active()
+        if source is not None:
+            import sys
+            from tools.env_probe_owned import ensure_started, fail
+            try:
+                ensure_started(sys.modules[__name__], source)
+            except BaseException as error:
+                fail(source, error)
+                raise
+            return
         if _PROBE_DONE.is_set() or (_PROBE_THREAD is not None and _PROBE_THREAD.is_alive()):
             return
         _PROBE_THREAD = threading.Thread(

@@ -128,6 +128,10 @@ async def close_tool_resources(source):
 async def close_remaining_python_resources(runner, keepalive):
     import hermes_cli.nous_auth_keepalive as auth
     import hermes_logging
+    probe = sys.modules.get("tools.env_probe")
+    if probe is not None:
+        from tools.env_probe_owned import shutdown
+        await asyncio.to_thread(shutdown, probe, runner._owned_gateway_source)
     auth._keepalive_stop.set()
     if keepalive is not None:
         await asyncio.to_thread(keepalive.join)

@@ -77,7 +77,6 @@ async def start_managed(source, config=None):
     from gateway.code_skew import record_boot_fingerprint
     record_boot_fingerprint()
     config = config if config is not None else canonical.load_gateway_config_for_runner()
-    boot._start_gateway_early_environment_probe()
     _claim_profile_ownership(config)
     boot._start_gateway_configure_logging(0)
     from gateway.run_startup import recover_left_core_at_gateway_start
@@ -89,6 +88,7 @@ async def start_managed(source, config=None):
     settlement = construct_settlement(source, runner)
     try:
         await initialize_gateway_runtime(runner)
+        boot._start_gateway_early_environment_probe()
         canonical._enable_multiplex_log_routing(runner.config)
         runner._platform_lock_takeover_on_start = False
         asyncio.get_running_loop().set_exception_handler(canonical._gateway_loop_exception_handler)
