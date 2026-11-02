@@ -314,6 +314,6 @@ def retire_original_listener(parent, *, request_stop):
     if request_stop and held:
         from gateway.native_source_stop import reject_native_runner_stop
         reject_native_runner_stop(parent.runner)
-        # A pending source capture can precede keeper fence registration. Even if
-        # the old no-fence ordinary branch returned, this source capture is held.
-        refuse("native_original_source_listener_retirement_held")
+        # Every retained original call and keeper has now reached its actual
+        # terminal private action. Construction holes and unknowns still refuse.
+        # This allows cooperative listener stop, never a kernel-exit claim.

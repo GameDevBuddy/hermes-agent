@@ -103,8 +103,8 @@ def test_per_call_source_original_worker_register_stops_at_execution_hold(monkey
         case.offer_task = case.loop.create_task(case.offer())
         case.run(case.offered.wait())
         monkeypatch.setattr("gateway.native_app_call.asyncio.run_coroutine_threadsafe", SourceSubmission)
-        with pytest.raises(RuntimeStoreError, match="native_execution_held"):
-            register_native_request(case.slot)
+        bound = register_native_request(case.slot)
+        assert bound is case.call
         assert case.call.authenticated and case.call.acknowledged and case.call.error is None
         assert case.request.native_phase == "execution_held"
         assert case.slot._native_pin is None and case.slot._native_active_use is None

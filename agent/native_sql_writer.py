@@ -25,6 +25,10 @@ def prepare_local_message(pending, message, raw_digest):
         return  # Unissued/unavailable ordinary error rows keep their existing behavior.
     use = _use(pending)
     try:
+        call = slot._source_constructions.get("app_call")
+        if use.phase == "held" and call is not None and call.origin is not None:
+            from gateway.native_app_worker import prepare_message
+            prepare_message(use, message, raw_digest)
         if (use.phase != "checked" or not use.io_checked or pending.message is not None
                 or use.data[0] != raw_digest or text_digest(message.get("content")) != use.data[1]):
             raise NativeSQLFailure("native_sql_result_projection_changed")
@@ -47,6 +51,9 @@ def fail_sources(sources, error):
             attempt = getattr(pin, "_sql_construction", None)
             book = attempt.book if attempt is not None else pin.book
             block(book, error, pin, getattr(pin, "active_use", None))
+            call = slot._source_constructions.get("app_call")
+            if call is not None and call.origin is not None:
+                call.origin.failed(error)
 
 
 def retained_writer_sources(agent, messages):
@@ -186,3 +193,20 @@ def finish_original_batch(sources):
         use = _use(pending)
         if use.phase != "observed" or use.observation is not pending.receipt:
             raise NativeSQLFailure("native_sql_original_observation_unavailable")
+        from gateway.native_app_worker import saved
+        saved(use)
+
+
+def original_transaction_returned(db, sources, callback, result):
+    lease = db._native_read_gate.lease
+    if lease is None:
+        return  # Local cooperating source fixtures do not claim an exclusive App transaction.
+    lease.require_owner()
+    matches = [commit for commit in lease.commits if commit.callback is callback]
+    if len(matches) != 1 or matches[0].result is not result:
+        raise NativeSQLFailure("native_original_batch_transaction_missing")
+    for _index, pending, _message in sources:
+        use = _use(pending)
+        if use.original_commit is not None:
+            raise NativeSQLFailure("native_original_batch_transaction_reentry")
+        use.original_commit = matches[0]

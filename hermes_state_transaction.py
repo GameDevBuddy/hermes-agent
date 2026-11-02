@@ -33,3 +33,11 @@ def execute_once(db, callback, attempt):
                 logger.exception("SessionDB rollback failed; preserving the original transaction exception")
             raise
     return result
+
+
+def execute_transcript(db, callback, sources, kwargs):
+    result = db._execute_write(callback, **kwargs)
+    if sources:
+        from agent.native_sql_writer import original_transaction_returned
+        original_transaction_returned(db, sources, callback, result)
+    return result

@@ -65,8 +65,17 @@ class NativeTurnRetention:
         with self.lock:
             held = self.ever_native
         if held:
-            # No ACK/retirement issuer exists. No timeout/cancellation becomes release.
-            await asyncio.Future()
+            from gateway.native_app_worker import require_completed_slot
+            try:
+                if self.blocked:
+                    raise RuntimeStoreError("native_original_keeper_unknown")
+                for slot in tuple(self.slots.values()):
+                    require_completed_slot(slot)
+            except RuntimeStoreError:
+                # Unknown originals stay retained; neither timeout nor cancellation is a release.
+                await asyncio.Future()
+            if asyncio.current_task() is not self.task or asyncio.get_running_loop() is not self.loop:
+                raise RuntimeStoreError("native_original_task_changed")
         self.completed = True
 
 

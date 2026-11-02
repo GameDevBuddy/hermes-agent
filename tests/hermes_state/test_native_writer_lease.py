@@ -1,6 +1,7 @@
 """Original SessionDB transactions on fresh SQLite files, never an App Origin or permit."""
 import sqlite3
 import threading
+from contextlib import contextmanager
 
 import pytest
 
@@ -205,3 +206,34 @@ def test_existing_reader_finishes_before_exclusive_acquisition(db):
         thread.join(5)
         releaser.join(5)
     assert not thread.is_alive() and not releaser.is_alive()
+
+
+def test_reader_selected_before_normal_release_resamples_without_replaying_body(db, monkeypatch):
+    lease = NativeWriterLease(db, object()).acquire()
+    selected, proceed = threading.Event(), threading.Event()
+    original_read, bodies = lease.read, []
+
+    @contextmanager
+    def delayed_original_read():
+        selected.set()
+        assert proceed.wait(5)
+        with original_read() as conn:
+            yield conn
+
+    monkeypatch.setattr(lease, "read", delayed_original_read)
+
+    def reader():
+        with db._read_ctx() as conn:
+            bodies.append(conn.execute("SELECT value FROM native_lease_fixture").fetchone()[0])
+
+    thread = threading.Thread(target=reader)
+    thread.start()
+    try:
+        assert selected.wait(5)
+        lease.release()
+        proceed.set()
+        thread.join(5)
+    finally:
+        proceed.set()
+        thread.join(5)
+    assert not thread.is_alive() and bodies == ["original"]

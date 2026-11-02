@@ -18,12 +18,16 @@ def _changed(columns):
 
 def _scope(condition):
     return ("EXISTS(SELECT 1 FROM native_pin_scopes s JOIN native_original_pins p "
-            f"ON p.pin_id=s.pin_id WHERE {condition})")
+            f"ON p.pin_id=s.pin_id WHERE {condition} AND " + _unreleased("p") + ")")
+
+
+def _unreleased(alias):
+    return f"NOT EXISTS(SELECT 1 FROM native_original_releases r WHERE r.pin_id={alias}.pin_id)"
 
 
 def _identity_guards():
     result = [_trigger("epoch_" + event.lower(), event, "runtime_epoch",
-                       "EXISTS(SELECT 1 FROM native_original_pins)")
+                       "EXISTS(SELECT 1 FROM native_original_pins p WHERE " + _unreleased("p") + ")")
               for event in ("INSERT", "UPDATE", "DELETE")]
     session_columns = ("id", "runtime_revision", "runtime_generation", "source", "session_key",
                        "parent_session_id", "ended_at", "end_reason", "model", "model_config",
@@ -46,7 +50,8 @@ def _identity_guards():
                 held = ("(" + held + ") AND (" + _changed((key, "holder", "acquired_at"))
                         + " OR NEW.expires_at<OLD.expires_at OR OLD.expires_at<=unixepoch('subsec'))")
             result.append(_trigger(table + "_" + event.lower(), event, table, held))
-    admission = "EXISTS(SELECT 1 FROM native_original_pins p WHERE p.admission_id=OLD.admission_id)"
+    admission = ("EXISTS(SELECT 1 FROM native_original_pins p WHERE p.admission_id=OLD.admission_id AND "
+                 + _unreleased("p") + ")")
     result.extend((
         _trigger("admission_update", "UPDATE", "session_admissions", admission + " AND ("
                  + _changed(("admission_id", "request_id", "principal_id", "target_session_id", "lineage_json",
@@ -55,9 +60,9 @@ def _identity_guards():
         _trigger("admission_delete", "DELETE", "session_admissions", admission),
         _trigger("admission_insert", "INSERT", "session_admissions",
                  "EXISTS(SELECT 1 FROM native_original_pins p JOIN session_admissions a "
-                 "ON a.admission_id=p.admission_id WHERE a.admission_id=NEW.admission_id OR "
+                 "ON a.admission_id=p.admission_id WHERE (a.admission_id=NEW.admission_id OR "
                  "(a.principal_id=NEW.principal_id AND a.target_session_id=NEW.target_session_id "
-                 "AND a.request_id=NEW.request_id))"),
+                 "AND a.request_id=NEW.request_id)) AND " + _unreleased("p") + ")"),
     ))
     return result
 
@@ -67,7 +72,7 @@ def _worker_guards():
     new = _scope("s.session_id=NEW.session_id AND p.generation=NEW.generation")
     replace = ("EXISTS(SELECT 1 FROM worker_executions w JOIN native_pin_scopes s ON s.session_id=w.session_id "
                "JOIN native_original_pins p ON p.pin_id=s.pin_id WHERE w.execution_id=NEW.execution_id "
-               "AND w.generation=p.generation)")
+               "AND w.generation=p.generation AND " + _unreleased("p") + ")")
     result = [
         _trigger("worker_delete", "DELETE", "worker_executions", old),
         _trigger("worker_update", "UPDATE", "worker_executions", "(" + old + " OR " + new + " OR " + replace + ") AND ("
@@ -85,18 +90,23 @@ def _worker_guards():
 
 def _message_guards():
     held = (_scope("s.session_id=OLD.session_id AND OLD.id<=p.message_ceiling")
-            + " OR EXISTS(SELECT 1 FROM native_pin_row_links l WHERE l.row_id=OLD.id)")
+            + " OR " + _active_links("l.row_id=OLD.id"))
     replacing = ("EXISTS(SELECT 1 FROM native_original_pins p WHERE "
-                 "(NEW.id>0 AND NEW.id<=p.message_ceiling AND "
+                 "((NEW.id>0 AND NEW.id<=p.message_ceiling AND "
                  "EXISTS(SELECT 1 FROM native_pin_scopes s WHERE s.pin_id=p.pin_id AND s.session_id=NEW.session_id)) "
-                 "OR (p.message_uid=NEW.message_uid AND p.transcript_session_id=NEW.session_id)) "
-                 "OR EXISTS(SELECT 1 FROM native_pin_row_links l WHERE l.row_id=NEW.id "
-                 "OR (l.message_uid=NEW.message_uid AND l.session_id=NEW.session_id))")
+                 "OR (p.message_uid=NEW.message_uid AND p.transcript_session_id=NEW.session_id)) AND "
+                 + _unreleased("p") + ") OR "
+                 + _active_links("l.row_id=NEW.id OR (l.message_uid=NEW.message_uid AND l.session_id=NEW.session_id)"))
     return [
         _trigger("message_update", "UPDATE", "messages", "(" + held + ") OR " + replacing),
         _trigger("message_delete", "DELETE", "messages", held),
         _trigger("message_insert", "INSERT", "messages", replacing),
     ]
+
+
+def _active_links(condition):
+    return ("EXISTS(SELECT 1 FROM native_pin_row_links l JOIN native_original_pins p ON p.pin_id=l.pin_id "
+            "WHERE (" + condition + ") AND " + _unreleased("p") + ")")
 
 
 def native_schema():
@@ -119,8 +129,11 @@ def native_schema():
         "session_id TEXT NOT NULL, row_id INTEGER NOT NULL UNIQUE, message_uid TEXT NOT NULL, tool_call_uid TEXT NOT NULL, "
         "row_version TEXT NOT NULL, raw_sha256 TEXT NOT NULL, projection_sha256 TEXT NOT NULL, "
         "witness_json TEXT NOT NULL CHECK(length(CAST(witness_json AS BLOB))<=8192))",
+        "CREATE TABLE native_original_releases (pin_id TEXT PRIMARY KEY REFERENCES native_original_pins(pin_id) "
+        "ON DELETE RESTRICT, invocation_id TEXT NOT NULL, invocation_sequence INTEGER NOT NULL CHECK(invocation_sequence>0), "
+        "proof_sha256 TEXT NOT NULL CHECK(length(proof_sha256)=64), request_id TEXT NOT NULL UNIQUE)",
     ]
-    for table in ("native_original_pins", "native_pin_scopes", "native_pin_active_uses", "native_pin_row_links"):
+    for table in ("native_original_pins", "native_pin_scopes", "native_pin_active_uses", "native_pin_row_links", "native_original_releases"):
         for event in ("UPDATE", "DELETE"):
             statements.append(_trigger(table + "_" + event.lower(), event, table, "1"))
         key = "pin_id=NEW.pin_id AND session_id=NEW.session_id" if table == "native_pin_scopes" else "pin_id=NEW.pin_id"
@@ -141,6 +154,9 @@ def native_schema():
                  "+length(CAST(NEW.session_id AS BLOB))<=p.scope_bytes)"),
         _trigger("use_bound", "INSERT", "native_pin_active_uses",
                  "NOT EXISTS(SELECT 1 FROM native_original_pins p WHERE p.pin_id=NEW.pin_id AND p.capture_sha256=NEW.capture_sha256)"),
+        _trigger("release_bound", "INSERT", "native_original_releases",
+                 "NOT EXISTS(SELECT 1 FROM native_pin_row_links l JOIN native_pin_active_uses u ON u.pin_id=l.pin_id "
+                 "WHERE l.pin_id=NEW.pin_id)"),
     ))
     return tuple(statements + _identity_guards() + _worker_guards() + _message_guards())
 

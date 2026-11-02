@@ -1,22 +1,20 @@
-"""Original stdin can associate a context; the App-owned call boundary stays closed.
+"""Require the retained context or actual authenticated per-call Origin.
 
-Python reference custody, UIDs, digests, SQL rows and local locks are not an
-OriginalCanonicalCall, OriginalCanonicalOrigin, commit proof or native permit.
-Root must compose actual App call constructors with the same transport/call.
-An original-pipe context association supplies none of those per-call rights.
+Context association, reference books, digests and SQL rows alone supply no
+per-call rights. The producer must retain the original App call and prepare.
 """
 from __future__ import annotations
 
 from hermes_state_runtime import RuntimeStoreError
 
 
-def require_original_app_context(connection, ref):
+def require_original_app_context(connection, ref, *, source_owner=None):
     from gateway.native_source_runtime import require_original_connection
     source = require_original_connection(connection)
     if source.authority.profile_id != ref.profile_id:
         raise RuntimeStoreError("profile_mismatch")
     from gateway.native_app_context import require_context
-    return require_context(connection, ref)
+    return require_context(connection, ref) if source_owner is None else require_context(connection, ref, source_owner=source_owner)
 
 
 def require_original_app_call(source, request=None):
@@ -26,4 +24,11 @@ def require_original_app_call(source, request=None):
     source.require_call()
     if request is not None and source.request is not request:
         raise RuntimeStoreError("native_original_source_request_changed")
-    raise RuntimeStoreError("native_original_app_call_issuer_missing")
+    from gateway.native_app_call import AppCall
+    from gateway.native_app_origin import OriginalCanonicalOrigin
+    call = source.slot._source_constructions.get("app_call")
+    origin = None if type(call) is not AppCall else call.origin
+    if type(origin) is not OriginalCanonicalOrigin or call.original is not source:
+        raise RuntimeStoreError("native_original_app_call_issuer_missing")
+    origin.require_current()
+    return origin

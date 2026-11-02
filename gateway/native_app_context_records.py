@@ -17,6 +17,13 @@ def refuse(reason="native_original_app_context_changed"):
 
 
 def source_for(connection):
+    source, original = _retained_source_for(connection)
+    if source.loop_thread is not threading.current_thread() or asyncio.get_running_loop() is not source.loop:
+        refuse()
+    return source, original
+
+
+def _retained_source_for(connection):
     from hermes_owned_gateway import OwnedGatewaySource, current
     from gateway.native_source_runtime import require_original_connection
     original = require_original_connection(connection)
@@ -27,11 +34,47 @@ def source_for(connection):
     if (source.runner is not runtime.runner or source.task is not runtime.bootstrap_task
             or source.loop is not runtime.loop or source.phase != "bound"
             or source._shutdown or source._control_closed or not source._ready_emitted
-            or source.stdin is not source.stdin_owner.buffer
-            or source.loop_thread is not threading.current_thread()
-            or asyncio.get_running_loop() is not runtime.loop):
+            or source.stdin is not source.stdin_owner.buffer):
         refuse()
     source.job.require_current_member()
+    return source, original
+
+
+def source_for_original_worker(connection, call):
+    from gateway.native_app_call import AppCall
+    from gateway.native_source_construction import require_constructed
+    source, original = _retained_source_for(connection)
+    if type(call) is not AppCall:
+        refuse("native_original_app_worker_missing")
+    require_constructed(call)
+    if (call.original.connection is not original or call.original.connection.connection is not connection
+            or call.worker_thread is not threading.current_thread() or call.original.loop is not source.loop
+            or call.original._source_construction.creator[0] is not call.worker_thread
+            or call.original.assistant._source_construction.creator[0] is not call.worker_thread
+            or not call.authenticated or not call.acknowledged or call.error is not None
+            or call.reader is not source._control_reader or call.reader.source is not source
+            or call.context is None or call.context.stage.source is not source
+            or call.context.request.reader is not call.reader):
+        refuse("native_original_app_worker_changed")
+    call.reader.require_retained()
+    return source, original
+
+
+def source_for_owner(connection, owner):
+    # This grants context metadata access, never a per-call Origin or native permission.
+    from agent.tool_commit_owner import ToolCommitOwner
+    from gateway.native_source_calls import OriginalSourceAssistant
+    source, original = _retained_source_for(connection)
+    assistant = getattr(owner, "native_source_assistant", None)
+    if type(owner) is not ToolCommitOwner or type(assistant) is not OriginalSourceAssistant:
+        refuse("native_original_context_owner_missing")
+    assistant.require_assistant()
+    if (assistant.owner is not owner or assistant.connection is not original
+            or assistant.authority is not connection.authority
+            or assistant.db is not owner.db or owner.agent() is not assistant.agent
+            or assistant._source_construction.creator[0] is not threading.current_thread()
+            or not owner.binding_current(owner.staged)):
+        refuse("native_original_context_owner_changed")
     return source, original
 
 
@@ -72,11 +115,18 @@ class ContextStage:
         self.generation = generation(selection)
         self._context_initialized = True
 
-    def require_current(self):
+    def require_current(self, *, original_call=None, source_owner=None):
         from gateway.native_app_context_construction import require_context_constructed
         require_context_constructed(self)
         s, c, selected = self.source, self.original.connection, self.selection
-        source, original = source_for(c)
+        if original_call is not None and source_owner is not None:
+            refuse("native_original_context_consumer_ambiguous")
+        if original_call is not None:
+            source, original = source_for_original_worker(c, original_call)
+        elif source_owner is not None:
+            source, original = source_for_owner(c, source_owner)
+        else:
+            source, original = source_for(c)
         if (not same_originals((source, original), (s, self.original))
                 or not same_originals((s.job, s.task, s.loop, s.stdin_owner, s.stdin, s.stdout_owner),
                                      (self.job, self.task, self.loop, self.stdin_owner, self.stdin, self.stdout_owner))
@@ -144,12 +194,15 @@ class OriginalAppContext:
         request.require_current()
         self._context_initialized = True
 
-    def require_current(self, connection, ref):
+    def require_current(self, connection, ref, *, original_call=None, source_owner=None):
         from gateway.native_app_context_construction import require_context_constructed
         require_context_constructed(self)
         request, stage = self.request, self.stage
         request.reader.require_retained()
-        stage.require_current()
+        if original_call is None and source_owner is None:
+            stage.require_current()
+        else:
+            stage.require_current(original_call=original_call, source_owner=source_owner)
         if (request.association is not self or request.error is not None
                 or stage.request is not request or stage.original.connection is not connection
                 or stage.selection.ref != ref

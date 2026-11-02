@@ -1604,6 +1604,11 @@ def execute_tool_calls_concurrent(agent, assistant_message, messages: list, effe
     ``finalize=False`` skips end-of-batch budget enforcement and /steer injection (the
     segmented dispatcher owns turn-end work)."""
     tool_calls = assistant_message.tool_calls
+    from agent.native_receipt_origin import is_native_tool_name
+    if any(is_native_tool_name(getattr(getattr(call, "function", None), "name", None)) for call in tool_calls):
+        # Native preparation and canonical saving own the same original SQLite thread.
+        return execute_tool_calls_sequential(agent, assistant_message, messages, effective_task_id,
+                                             api_call_count, finalize=finalize)
     num_tools = len(tool_calls)
     _tool_budget = _budget_for_agent(agent)  # once per turn, not per result
 

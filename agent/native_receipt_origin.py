@@ -119,8 +119,9 @@ class NativeSlot:
     def execute(self, _gate=None):
         from gateway.session_server_requests import register_native_request
         self.prepare_source_declaration()
-        register_native_request(self)  # Source authentication ends at the explicit execution hold.
-        raise NativeAdmissionRefused("native_original_app_call_issuer_missing")
+        call = register_native_request(self)
+        from gateway.native_app_worker import execute
+        return execute(call)
 
 
 def _declaration_local_refs(slot, source):

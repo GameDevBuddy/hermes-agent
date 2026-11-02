@@ -18,6 +18,10 @@ class NativeReadGate:
         self.lease = None
 
 
+class _ReleasedRead(Exception):
+    """A reader's original lease ended before it acquired the database lock; no body ran."""
+
+
 @dataclass(frozen=True)
 class OriginalTransactionCommit:
     lease: object
@@ -30,6 +34,8 @@ class OriginalTransactionCommit:
 
 class NativeWriterLease:
     def __init__(self, db, call):
+        self.phase, self.error, self.traceback = "initializing", None, None
+        self.io_lock = None
         self.db, self.call, self.connection = db, call, db._conn
         self.owner, self.gate = threading.current_thread(), db._native_read_gate
         self.writer = db._execute_write
@@ -37,15 +43,21 @@ class NativeWriterLease:
         self.phase, self.error, self.traceback = "reserved", None, None
         self.writing = self.configuring = False
         self.commits = []
+        self.acquisition = None
         self.previous_mode = None
         self.authorizer = self.authorize
+        self.io_lock = threading.RLock()
 
     def failed(self, error):
-        if self.error is None:
+        if getattr(self, "error", None) is None:
             self.error, self.traceback = error, error.__traceback__
         self.phase = "unknown"
 
     def require_current(self):
+        with self.io_lock:
+            self._require_current_locked()
+
+    def _require_current_locked(self):
         current = self.db._execute_write
         if (self.error is not None or self.gate.lease is not self or self.db._conn is not self.connection
                 or self.phase not in ("acquiring", "held", "releasing")
@@ -87,7 +99,7 @@ class NativeWriterLease:
                     if remaining <= 0:
                         raise NativeSQLFailure("native_writer_readers_not_drained")
                     self.gate.condition.wait(remaining)
-            with self.db._lock:
+            with self.db._lock, self.io_lock:
                 if (self.connection is None or self.connection.in_transaction or self.db.read_only
                         or self.db._conn is not self.connection):
                     raise NativeSQLFailure("native_writer_original_connection_required")
@@ -103,6 +115,7 @@ class NativeWriterLease:
             # The existing BEGIN IMMEDIATE/commit producer acquires the actual file lock.
             # A locking_mode value by itself never proves another writer was excluded.
             self.writer(lambda conn: conn.execute("SELECT 1").fetchone()[0], patience_s=0)
+            self.acquisition = self.commits[-1]
             self.phase = "held"
             self.require_owner()
             return self
@@ -114,13 +127,23 @@ class NativeWriterLease:
             with self.gate.condition:
                 self.gate.condition.notify_all()
 
+    def exclusion(self):
+        self.require_owner()
+        if (self.phase != "held" or not self.commits or self.acquisition is not self.commits[0]
+                or self.acquisition.connection is not self.connection or self.acquisition.thread is not self.owner):
+            raise NativeSQLFailure("native_original_exclusion_acquisition_missing")
+        return "sqlite-exclusive-connection"
+
     @contextmanager
     def read(self):
-        self.require_current()
         if threading.current_thread() is self.owner and self.writing:
-            yield self.connection
+            with self.io_lock:
+                self.require_current()
+                yield self.connection
         else:
-            with self.db._lock:
+            with self.db._lock, self.io_lock:
+                if self.phase == "released" and self.error is None and self.gate.lease is not self:
+                    raise _ReleasedRead()
                 self.require_current()
                 yield self.connection
 
@@ -137,20 +160,20 @@ class NativeWriterLease:
         self.require_owner()
         if self.phase != "held" or self.connection.in_transaction or self.writing:
             raise NativeSQLFailure("native_writer_release_reentry")
-        self.phase, self.configuring = "releasing", True
         try:
-            with self.db._lock:
+            with self.db._lock, self.io_lock:
+                self.phase, self.configuring = "releasing", True
                 mode = self.connection.execute("PRAGMA main.locking_mode=NORMAL").fetchone()[0]
                 if mode != "normal":
                     raise NativeSQLFailure("native_writer_release_unconfirmed")
             # SQLite requires actual file access after NORMAL before it releases the lock.
             self.writer(lambda conn: conn.execute("SELECT count(*) FROM sqlite_schema").fetchone()[0], patience_s=0)
-            with self.db._lock:
+            with self.db._lock, self.io_lock:
                 self.connection.set_authorizer(None)
-            self.phase = "released"
-            with self.gate.condition:
-                self.gate.lease = None
-                self.gate.condition.notify_all()
+                self.phase = "released"
+                with self.gate.condition:
+                    self.gate.lease = None
+                    self.gate.condition.notify_all()
         except BaseException as error:
             self.failed(error)
             raise
@@ -161,21 +184,28 @@ class NativeWriterLease:
 @contextmanager
 def read_context(db, ordinary):
     gate = db._native_read_gate
-    with gate.condition:
-        lease = gate.lease
-        while lease is not None and lease.phase == "acquiring" and threading.current_thread() is not lease.owner:
-            gate.condition.wait()
+    while True:
+        with gate.condition:
             lease = gate.lease
-        if lease is None:
-            gate.readers += 1
-    try:
-        with (ordinary() if lease is None else lease.read()) as conn:
-            yield conn
-    finally:
-        if lease is None:
-            with gate.condition:
-                gate.readers -= 1
-                gate.condition.notify_all()
+            while lease is not None and lease.phase == "acquiring" and threading.current_thread() is not lease.owner:
+                gate.condition.wait()
+                lease = gate.lease
+            if lease is None:
+                gate.readers += 1
+        entered = False
+        try:
+            with (ordinary() if lease is None else lease.read()) as conn:
+                entered = True
+                yield conn
+            return
+        except _ReleasedRead:
+            if entered:
+                raise  # Only resample before a reader body has ever run.
+        finally:
+            if lease is None:
+                with gate.condition:
+                    gate.readers -= 1
+                    gate.condition.notify_all()
 
 
 def require_transaction_entry(db):
@@ -194,6 +224,13 @@ def transaction_scope(db):
     if lease is None:
         yield None
         return
+    with lease.io_lock, _leased_transaction(lease):
+        yield lease
+
+
+@contextmanager
+def _leased_transaction(lease):
+    lease.require_owner()
     if len(lease.commits) >= 512:
         raise NativeSQLFailure("native_original_commit_capacity")
     lease.writing = True

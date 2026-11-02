@@ -118,7 +118,7 @@ def register_native_request(slot):
     """Authenticate this source candidate on original IO; execution remains held."""
     from gateway.native_app_call import register
     request = retain_native_candidate(slot)
-    register(slot, request)
+    return register(slot, request)
 
 
 def retain_native_candidate(slot):

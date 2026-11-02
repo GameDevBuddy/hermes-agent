@@ -1,4 +1,4 @@
-"""Per-call source authentication on the original socket/pipes; execution stays held.
+"""Per-call source authentication on the original socket/pipes, before preparation.
 
 The wire digest correlates bytes already sent by the retained source call. It is
 not an Origin, a commit proof, a native permit or evidence of writer exclusion.
@@ -9,6 +9,7 @@ import asyncio
 import hashlib
 import json
 import threading
+import time
 
 from hermes_state_runtime import RuntimeStoreError
 
@@ -33,6 +34,9 @@ class AppCall:
         self.initial_proof = self.commit_proof = self.commit_proof_sha256 = None
         self.result_frame = self.raw_result = self.decline_frame = None
         self.worker_event = threading.Event()
+        from gateway.session_server_requests import REQUEST_TIMEOUT_S
+        self.worker_thread, self.deadline = threading.current_thread(), time.monotonic() + REQUEST_TIMEOUT_S
+        self.proof_credit, self.terminal, self.completion = 0, None, None
 
     def failed(self, error):
         if self.error is None:
@@ -52,7 +56,15 @@ class AppCall:
             refuse("native_original_app_call_changed")
         if self.context is not None:
             from gateway.native_app_context import require_context
-            current = require_context(self.original.connection.connection, self.original.selection.ref)
+            # Construction and loop consumers retain their original loop gate.
+            # Only this authenticated original worker may inspect the retained association off-loop.
+            try:
+                on_loop = asyncio.get_running_loop() is self.original.loop
+            except RuntimeError:
+                on_loop = False
+            worker = self if not on_loop and threading.current_thread() is self.worker_thread else None
+            inputs = self.original.connection.connection, self.original.selection.ref
+            current = require_context(*inputs) if worker is None else require_context(*inputs, original_call=worker)
             if current is not self.context or not current.selection.same_selection(self.original.selection):
                 refuse("native_original_app_call_context_changed")
         if self.wire is not None and self.wire != _wire(self.original, self.request):
@@ -145,7 +157,7 @@ def register(slot, request):
     except BaseException as error:
         call.failed(error)
         raise
-    refuse("native_execution_held")
+    return call
 
 
 def claim(reader, frame):

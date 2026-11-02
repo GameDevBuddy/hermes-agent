@@ -139,7 +139,7 @@ def bridge_for_owner(authority, session_id, generation, live, owner):
         if not isinstance(selection, NativeSelection) or not selection.current():
             raise RuntimeStoreError("permission_denied")
         from gateway.native_source_issuance import require_original_app_context
-        require_original_app_context(selection.connection, selection.ref)
+        require_original_app_context(selection.connection, selection.ref, source_owner=owner)
         if (selection.ref.profile_id != owner.scope["profile_id"]
                 or selection.instance_id != owner.scope["instance_id"]
                 or selection.authority_epoch != owner.scope["epoch"]):

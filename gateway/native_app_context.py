@@ -130,12 +130,15 @@ async def bind_from_reader(request):
         raise
 
 
-def require_context(connection, ref):
+def require_context(connection, ref, *, original_call=None, source_owner=None):
     from gateway.session_contract import SessionRef
     if type(ref) is not SessionRef:
         refuse("native_original_app_context_issuer_missing")
     value = connection._gdb_original_app_contexts.get(ref.session_id)
     if type(value) is not OriginalAppContext:
         refuse("native_original_app_context_issuer_missing")
-    value.require_current(connection, ref)
+    if original_call is None and source_owner is None:
+        value.require_current(connection, ref)
+    else:
+        value.require_current(connection, ref, original_call=original_call, source_owner=source_owner)
     return value

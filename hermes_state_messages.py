@@ -516,7 +516,8 @@ class SessionMessagesMixin(SessionDetachedResultsMixin, SessionTodoResultMixin):
                         raise NativeSQLFailure(getattr(error, "reason", "native_sql_original_body_unknown")) from error
                 raise
         try:
-            return self._execute_write(_attempt, **kwargs)
+            from hermes_state_transaction import execute_transcript
+            return execute_transcript(self, _attempt, native_sources, kwargs)
         except BaseException as error:
             _restore()
             if native_sources:

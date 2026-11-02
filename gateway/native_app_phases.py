@@ -144,12 +144,16 @@ async def receive(phase):
         raise
 
 
-def event(phase, name):
+def event(phase, name, *, proof=None, proof_sha256=None):
     phase.require_current(active=not phase.completed)
     if name in phase.publications:
         refuse("native_original_phase_publication_reentry")
     payload = {key: value for key, value in phase.frame.items() if key != "command"}
     payload["event"] = name
+    if proof_sha256 is not None:
+        payload["proofSha256"] = proof_sha256
+    if proof is not None:
+        payload["proof"] = proof
     phase.publications[name] = payload
     phase.reader.source._emit(payload)
     return payload

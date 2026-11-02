@@ -135,4 +135,11 @@ def require_no_local_native_hold(db):
     if gate is not None and gate.lease is not None:
         raise NativeSQLFailure("native_writer_original_database_retirement_held")
     if getattr(db, "_native_pin_init_consumed", False):
-        raise NativeSQLFailure("native_sql_original_database_retirement_held")
+        book = db._native_pin_book
+        if type(book) is not NativeSQLBook or book.error is not None or not book.pins:
+            raise NativeSQLFailure("native_sql_original_database_retirement_held")
+        from gateway.native_app_worker import require_completed_slot
+        for slot, pin in book.pins.values():
+            if pin is None or pin.phase != "released":
+                raise NativeSQLFailure("native_sql_original_database_retirement_held")
+            require_completed_slot(slot)

@@ -38,7 +38,7 @@ class NativeRetirementPin:
 class NativeOriginalUse:
     __slots__ = (
         "_sql_construction", "call_json", "capture", "credit", "data", "error", "expected", "io_checked",
-        "keeper", "observation", "original_source_call", "owner", "pending", "phase", "pin", "projection", "provisional_link",
+        "keeper", "observation", "original_commit", "original_source_call", "owner", "pending", "phase", "pin", "projection", "provisional_link",
         "raw_result", "request", "slot", "source", "sql_values", "writer_entered", "writer_returned",
     )
 
@@ -54,6 +54,7 @@ class NativeOriginalUse:
         self.raw_result = self.projection = self.observation = None
         self.provisional_link = None
         self.writer_entered = self.writer_returned = False
+        self.original_commit = None
 
 
 _SQL_TYPES = NativeRetirementPin, NativeOriginalUse
