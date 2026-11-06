@@ -179,7 +179,9 @@ class Case:
     def params(self, **changes):
         return {"nonce": NONCE, "session_id": "s", "context_id": "context-fixture",
                 "snapshot_sha256": "b" * 64,
-                "tools": [{"name": "gdb_native_" + TOOL.lower(), "tool_ref": TOOL}], **changes}
+                "tools": [{"name": "gdb_native_" + TOOL.lower(), "tool_ref": TOOL,
+                           "description": "Native context source fixture",
+                           "input_schema": {"type": "object", "properties": {}}}], **changes}
 
     def stage(self, **changes):
         return self.run(self.connection.dispatch({"id": 1, "method": "native.context.stage",

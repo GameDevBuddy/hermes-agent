@@ -149,7 +149,7 @@ class GatewaySessionAgentMixin:
         )
 
     def _build_fresh_agent(self, turn_route, platform_key, combined_ephemeral, max_iterations,
-                           reasoning_config, pr, skip_context_files):
+                           reasoning_config, pr, skip_context_files, *, native_model_tools=None):
         from gateway.run import _checkpoint_agent_kwargs
         ctx = self._ctx
         runner = self._runner
@@ -159,6 +159,7 @@ class GatewaySessionAgentMixin:
         from gateway.session_worker_construct import session_prefill
         policy = policy_for_source(runner, src)
         return ctx.AIAgent(
+            native_model_tools=native_model_tools,
             model=turn_route["model"], **turn_route["runtime"], **_checkpoint_agent_kwargs(ctx.user_config),
             max_iterations=max_iterations, quiet_mode=not bool(policy and policy.verbose), verbose_logging=False,
             enabled_toolsets=ctx.enabled_toolsets, disabled_toolsets=ctx.disabled_toolsets,
@@ -201,6 +202,11 @@ class GatewaySessionAgentMixin:
             user_id_alt=getattr(ctx.source, "user_id_alt", None),
             skip_context_files=skip_context_files,
         )
+        from gateway.native_model_context import snapshot_for_agent
+        # One immutable snapshot supplies both cache identity and constructor data.
+        native_tools, native_key = snapshot_for_agent(runner, ctx.session_id)
+        if native_key is not None:
+            sig = (sig, native_key)
         cache_lock = getattr(runner, "_agent_cache_lock", None)
         cache = getattr(runner, "_agent_cache", None)
         peek_sid, dead = self._cached_sid_is_dead(cache_lock, cache)
@@ -223,6 +229,7 @@ class GatewaySessionAgentMixin:
         if agent is None:
             agent = self._build_fresh_agent(
                 turn_route, platform_key, combined_ephemeral, max_iterations, reasoning_config, pr, skip_context_files,
+                native_model_tools=native_tools,
             )
             if cache_lock and cache is not None:
                 with cache_lock:

@@ -26,7 +26,8 @@ def _selected(params, ref):
         raise RuntimeStoreError("invalid_params")
     pairs, names, refs = [], set(), set()
     for item in params["tools"]:
-        if (not isinstance(item, dict) or set(item) != {"name", "tool_ref"}
+        if (not isinstance(item, dict) or set(item) != {"name", "tool_ref", "description", "input_schema"}
+                or not isinstance(item["description"], str) or type(item["input_schema"]) is not dict
                 or not isinstance(item["name"], str)
                 or not isinstance(item["tool_ref"], str) or not _ULID.fullmatch(item["tool_ref"])
                 or item["name"] != "gdb_native_" + item["tool_ref"].lower()
@@ -35,9 +36,13 @@ def _selected(params, ref):
         names.add(item["name"])
         refs.add(item["tool_ref"])
         pairs.append((item["name"], item["tool_ref"]))
-    # One immutable ordering; no duplicate, unknown or caller-defined function dispatch.
-    encoded = frozen_json([{"name": name, "tool_ref": tool_ref} for name, tool_ref in pairs],
-                          1024 * 1024)
+    # Freeze ALL descriptors, not only dispatch references. The aggregate is bounded
+    # before retention; frozen_json also bounds JSON depth/nodes and rejects non-JSON values.
+    # These bytes carry model data only, never per-call authority.
+    try:
+        encoded = frozen_json(params["tools"], 1024 * 1024)
+    except RuntimeStoreError:
+        raise RuntimeStoreError("invalid_params") from None
     return params["context_id"], params["snapshot_sha256"], tuple(pairs), encoded
 
 @dataclass(frozen=True)

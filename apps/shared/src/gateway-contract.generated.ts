@@ -5337,6 +5337,8 @@ export interface NativeContextStageParams {
 export interface NativeContextTool {
   name: string
   tool_ref: string
+  description: string
+  input_schema: Record<string, unknown>
 }
 export interface NativeContextStageResult {
   staged: true

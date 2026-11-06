@@ -1035,6 +1035,12 @@ def _load_tools(agent, enabled_toolsets, disabled_toolsets):
     agent.tools = agent_tool_surface(agent, model_tools.get_tool_definitions(
         enabled_toolsets=enabled_toolsets, disabled_toolsets=disabled_toolsets, quiet_mode=agent.quiet_mode) or [])
 
+    native = getattr(agent, "_native_model_tools", None)
+    if native is not None:
+        from agent.native_model_tools import NativeModelTools
+        if type(native) is not NativeModelTools:
+            raise TypeError("native_model_tools must be immutable model schema data")
+        agent.tools = native.append_to(agent.tools)
     agent.valid_tool_names = {tool["function"]["name"] for tool in agent.tools} if agent.tools else set()
     # Kanban guidance is session-static for the dispatcher-owned worker only. Profiles may
     # expose kanban_show interactively, and children/cron runs inherit the env var, without
@@ -2143,6 +2149,7 @@ def init_agent(
     requested_provider: str | None = None, capabilities: Optional[dict[str, bool]] = None, cwd: Optional[str] = None,
     side_agent: bool = False, memory_manager=None,
     tool_result_metadata_callback: Optional[Callable[..., dict]] = None,
+    native_model_tools=None,
 ):
     from agent.safe_worker_policy import safe_worker_enabled
 
@@ -2219,6 +2226,7 @@ def init_agent(
     _set_defaults(agent, _STREAM_STATE)
     _build_client(agent, api_key, base_url, fallback_model)
     _init_fallback_chain(agent, fallback_model)
+    agent._native_model_tools = native_model_tools
     _load_tools(agent, enabled_toolsets, disabled_toolsets)
     _init_session_state(
         agent, session_id, session_db, parent_session_id, reasoning_config, max_tokens,

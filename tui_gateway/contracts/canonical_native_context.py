@@ -1,13 +1,15 @@
 """Canonical selection staging only; the original stdin must complete association."""
 from typing import Literal
 
-from .base import Params, Result
+from .base import JsonValue, Params, Result
 from .registry import canonical_method
 
 
 class NativeContextTool(Params):
     name: str
     tool_ref: str
+    description: str
+    input_schema: dict[str, JsonValue]
 
 
 class NativeContextStageParams(Params):

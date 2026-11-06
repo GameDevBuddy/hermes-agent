@@ -133,6 +133,9 @@ def refresh_agent_mcp_tools(
     from toolsets import agent_tool_surface
     new_defs = agent_tool_surface(agent, list(
         get_tool_definitions(enabled_toolsets=enabled, disabled_toolsets=disabled, quiet_mode=quiet_mode) or []))
+    native = getattr(agent, "_native_model_tools", None)
+    if native is not None:
+        new_defs = native.append_to(new_defs)  # Agent-local frozen schemas, never registry entries or permissions.
     new_names = {_def_name(t) for t in new_defs}
     # Post-build families re-appended on LOCALS only; live attributes untouched until publish.
     staged_engine_names = _reinject_post_build_tools(agent, new_defs, new_names)
@@ -281,6 +284,15 @@ def restore_agent_tool_prefix(agent, saved) -> bool:
     merged = _drop_gated_carried_tools(merged, carried)
     merged_names = {_def_name(t) for t in merged}
     _reinject_authorized_dynamic_tools(agent, merged, merged_names)
+    native = getattr(agent, "_native_model_tools", None)
+    if native is not None:
+        from agent.native_receipt_origin import is_native_tool_name
+        selected = {_def_name(tool): tool for tool in native.definitions()}
+        # A durable pin is past schema data, not the current original selection.
+        # Keep non-native prefix policy; never let a pin replace/widen native schemas.
+        merged = [selected.get(_def_name(tool), tool) for tool in merged
+                  if not is_native_tool_name(_def_name(tool)) or _def_name(tool) in selected]
+        merged_names = {_def_name(tool) for tool in merged}
     merged, merged_names = _drop_session_tools(agent, merged, merged_names)
     changed = merged != fresh_defs
     if changed:

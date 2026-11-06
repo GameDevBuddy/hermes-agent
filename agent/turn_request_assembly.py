@@ -204,6 +204,11 @@ def assemble_api_request(
     # the canonical tool registry stays undecorated. Marked ``content`` becomes text
     # blocks the whitespace pass skips, so the same row's bytes vary across turns.
     tools_for_api = agent.tools
+    if getattr(agent, "_native_model_tools", None) is not None:
+        # Providers and cache planners receive a request-local tree, never the
+        # agent's frozen native snapshot (also when prompt caching is disabled).
+        from copy import deepcopy
+        tools_for_api = deepcopy(tools_for_api)
     if agent._use_prompt_caching and agent.provider != "moa":
         from agent.prompt_caching import envelope_tool_part_cache_markers_supported
 

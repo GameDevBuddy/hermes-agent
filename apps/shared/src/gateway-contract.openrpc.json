@@ -24520,11 +24520,22 @@
           "tool_ref": {
             "title": "Tool Ref",
             "type": "string"
+          },
+          "description": {
+            "title": "Description",
+            "type": "string"
+          },
+          "input_schema": {
+            "additionalProperties": true,
+            "title": "Input Schema",
+            "type": "object"
           }
         },
         "required": [
           "name",
-          "tool_ref"
+          "tool_ref",
+          "description",
+          "input_schema"
         ],
         "title": "NativeContextTool",
         "type": "object"

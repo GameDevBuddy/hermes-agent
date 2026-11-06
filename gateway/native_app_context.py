@@ -26,6 +26,10 @@ async def stage(connection, ref, params):
         context, snapshot, tools, encoded = _selected({k: v for k, v in params.items() if k != "nonce"}, ref)
     except (UnicodeError, ValueError, TypeError, RecursionError):
         refuse("invalid_params")
+    # Retain our decoded copy of the frozen descriptors. Pydantic's open JSON
+    # values may share nested caller containers; later caller mutation must not
+    # rewrite the staged schema or invalidate the original bind's saved inputs.
+    params = {**params, "tools": json.loads(encoded)}
     authority = connection.authority
     authority.authorize(connection.actor, ref, "session:control", restore_if_missing=False)
     live = authority.sessions.get(ref.session_id)
