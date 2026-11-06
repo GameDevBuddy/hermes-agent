@@ -298,7 +298,7 @@ def main() -> int:
     parser.add_argument("--source", default="local", help="Stamp source label")
     parser.add_argument(
         "--distribution",
-        choices=("docker", "nix", "desktop-app", "apt-termux"),
+        choices=("docker", "nix", "desktop-app", "apt-termux", "gamedevbuddy-app"),
         help="Package distribution (the steward that replaces this tree)",
     )
     parser.add_argument(

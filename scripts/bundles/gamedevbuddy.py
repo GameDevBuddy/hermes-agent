@@ -12,6 +12,7 @@ import os
 from pathlib import Path
 import re
 import stat
+import subprocess
 import sys
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -86,6 +87,9 @@ def seal_runtime(payload: Path, revision: str) -> dict:
         raise ValueError("Canonical assembly must name the exact source revision")
     runtime = canonical["runtime"]
     repo = _contained(payload, runtime["repoDir"])
+    stamp = repo / "install-stamp.json"
+    if stamp.exists() or stamp.is_symlink():
+        raise ValueError("Runtime already contains an install stamp; use a fresh unstamped assembly")
     python = _contained(payload, runtime["storePython"])
     site = _contained(payload, runtime["sitePackages"])
     tools = _contained(payload, runtime["toolsDir"])
@@ -107,6 +111,17 @@ def seal_runtime(payload: Path, revision: str) -> dict:
         raise ValueError("Canonical installed-feature inventory is required")
     # Fail before adding our files if any existing entry escapes the payload.
     inventory(payload)
+    # Use the canonical producer's admitted, tagless commit-build path. This
+    # runtime is owned by our installer, not an inherited Electron/CI identity.
+    env = {**os.environ, "HERMES_BUILD_COMMIT": revision,
+           "HERMES_DESKTOP_VARIANT": "runtime", "HERMES_PAYLOAD_TAG": ""}
+    subprocess.run(
+        [sys.executable, "-I", "-S", "-B", str(ROOT / "scripts/write_install_stamp.py"),
+         "--output", str(stamp), "--commit", revision,
+         "--distribution", "gamedevbuddy-app", "--update-mechanism", "external",
+         "--runtime-dir", Path(os.path.relpath(tools, repo)).as_posix()],
+        env=env, check=True, capture_output=True, text=True, encoding="utf-8", timeout=30,
+    )
     wrapper = render_wrapper("hermes_cli.gamedevbuddy:main",
                              "../" + runtime["repoDir"], "../" + runtime["sitePackages"])
     additions[1].parent.mkdir(exist_ok=True)

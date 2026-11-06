@@ -32,7 +32,7 @@ class VersionInfo:
     source: Literal["build", "commit-build", "ci", "docker", "fallback", "git", "local", "nix", "unknown"]
     dirty: bool = False
     commit_date: int | None = None
-    distribution: Literal["docker", "nix", "desktop-app"] | None = None
+    distribution: Literal["docker", "nix", "desktop-app", "gamedevbuddy-app"] | None = None
 
     @property
     def display_version(self) -> str:
@@ -182,7 +182,7 @@ def _stamp_version_info() -> VersionInfo | None:
         else "build"
     )
     distribution = data.get("distribution")
-    if distribution not in {"docker", "nix", "desktop-app"}:
+    if distribution not in {"docker", "nix", "desktop-app", "gamedevbuddy-app"}:
         distribution = None
 
     commit_date = data.get("commitDate")
