@@ -78,6 +78,91 @@ def test_original_canonical_socket_decline_allocates_no_native_or_sql_pin(monkey
         case.close()
 
 
+RECEIPT_STORE_FULL_ERROR = {
+    "code": -32042,
+    "message": "Native receipt store full; this request did not run. You can continue chatting.",
+}
+
+
+def test_original_canonical_socket_receipt_store_full_allocates_no_native_or_sql_pin(monkeypatch, tmp_path):
+    case = CallCase(monkeypatch, tmp_path)
+
+    def full(current):
+        frame = {"jsonrpc": "2.0", "id": current.slot._native_request_candidate_id,
+                 "error": dict(RECEIPT_STORE_FULL_ERROR)}
+        assert not resolve(object(), frame)
+        assert current.call.decline_frame is None
+        current.connection._resolve_response(frame)
+        assert current.call.decline_frame is frame
+        assert current.call.protocol_phase == current.call.request.native_phase == "receipt_store_full"
+        assert current.call.worker_event.is_set() and current.call.error is None
+        assert current.call.result_frame is None and current.call.raw_result is None
+        assert current.call.invocation is None and not current.call.phases
+        assert current.call.origin is None and current.call.writer_lease is None
+        assert current.slot._native_pin is None and current.slot._native_active_use is None
+        assert current.slot.origin is None
+
+    try:
+        bound_exchange(case, full)
+    finally:
+        case.close()
+
+
+@pytest.mark.parametrize("change", [
+    {"error": {**RECEIPT_STORE_FULL_ERROR, "message": "different"}},
+    {"error": {**RECEIPT_STORE_FULL_ERROR, "message": DECLINE["message"]}},
+    {"error": {"code": -32042}},
+    {"error": {**RECEIPT_STORE_FULL_ERROR, "data": {}}},
+    {"result": "not an editor result"},
+    {"extra": True},
+    {"jsonrpc": "1.0"},
+])
+def test_receipt_store_full_rejects_changed_wire_shape(monkeypatch, tmp_path, change):
+    case = CallCase(monkeypatch, tmp_path)
+
+    def invalid(current):
+        frame = {"jsonrpc": "2.0", "id": current.slot._native_request_candidate_id,
+                 "error": dict(RECEIPT_STORE_FULL_ERROR), **change}
+        with pytest.raises(RuntimeStoreError, match="native_original_decline_unavailable") as observed:
+            current.connection._resolve_response(frame)
+        assert current.call.error is observed.value and current.call.traceback is not None
+        assert current.call.result_frame is None and current.call.decline_frame is None
+        assert current.call.request.native_phase == "blocked"
+
+    try:
+        bound_exchange(case, invalid)
+    finally:
+        case.close()
+
+
+@pytest.mark.parametrize("state", ["source", "prepared", "result_received", "declined", "released",
+                                    "invocation", "phases", "pin"])
+def test_receipt_store_full_rejects_execution_state(monkeypatch, tmp_path, state):
+    case = CallCase(monkeypatch, tmp_path)
+
+    def invalid(current):
+        if state == "invocation":
+            current.call.invocation = ("11111111-1111-4111-8111-111111111111", 1)
+        elif state == "phases":
+            claim(current.call.reader, phase_frame(current))
+        elif state == "pin":
+            current.slot._native_pin = object()
+        else:
+            current.call.protocol_phase = state
+        frame = {"jsonrpc": "2.0", "id": current.slot._native_request_candidate_id,
+                 "error": dict(RECEIPT_STORE_FULL_ERROR)}
+        with pytest.raises(RuntimeStoreError, match="native_original_decline_unavailable") as observed:
+            current.connection._resolve_response(frame)
+        assert current.call.error is observed.value and current.call.traceback is not None
+        assert current.call.result_frame is None and current.call.decline_frame is None
+        assert current.call.request.native_phase == "blocked"
+
+    try:
+        bound_exchange(case, invalid)
+    finally:
+        case.close()
+
+
 @pytest.mark.parametrize("result", [{"error": {"code": -32041, "message": "different"}},
                                    {"result": {"invocationId": "not prepared", "invocationSequence": 1, "rawResult": "x"}}])
 def test_native_response_cannot_skip_preparation_or_masquerade_as_decline(monkeypatch, tmp_path, result):

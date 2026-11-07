@@ -1,4 +1,4 @@
-"""Results/declines from the SAME original canonical App socket, never viewers."""
+"""Results/pre-Prepare refusals from the SAME original App socket, never viewers."""
 from __future__ import annotations
 
 import json
@@ -6,11 +6,17 @@ import json
 from gateway.native_source_runtime import refuse
 
 DECLINE = {"code": -32041, "message": "User declined native request"}
+RECEIPT_STORE_FULL = {
+    "code": -32042,
+    "message": "Native receipt store full; this request did not run. You can continue chatting.",
+}
 
 
-def denied_result():
-    return json.dumps({"error": "native_request_declined", "isError": True,
-                       "message": DECLINE["message"], "replayAllowed": False}, separators=(",", ":"))
+def denied_result(frame):
+    error = frame["error"]
+    reason = "receipt_store_full" if error == RECEIPT_STORE_FULL else "native_request_declined"
+    return json.dumps({"error": reason, "isError": True,
+                       "message": error["message"], "replayAllowed": False}, separators=(",", ":"))
 
 
 def _original_call(connection, frame):
@@ -25,13 +31,15 @@ def _original_call(connection, frame):
     return call, pending
 
 
-def _decline(call, frame):
+def _preparation_refusal(call, frame):
     if (set(frame) != {"jsonrpc", "id", "error"} or frame["jsonrpc"] != "2.0"
-            or frame["error"] != DECLINE or call.protocol_phase != "awaiting_prepare"
+            or frame["error"] not in (DECLINE, RECEIPT_STORE_FULL) or call.protocol_phase != "awaiting_prepare"
             or call.phases or call.invocation is not None or call.slot._native_pin is not None):
         refuse("native_original_decline_unavailable")
+    # Reuse the pre-Prepare terminal storage, not the user-decline status.
     call.decline_frame = frame
-    call.protocol_phase, call.request.native_phase = "declined", "declined"
+    phase = "receipt_store_full" if frame["error"] == RECEIPT_STORE_FULL else "declined"
+    call.protocol_phase, call.request.native_phase = phase, phase
     call.worker_event.set()
 
 
@@ -75,7 +83,7 @@ def resolve(connection, frame):
         if call.result_frame is not None or call.decline_frame is not None:
             refuse("native_original_result_replay")
         if "error" in frame:
-            _decline(call, frame)
+            _preparation_refusal(call, frame)
         else:
             _native_result(call, frame)
         return True

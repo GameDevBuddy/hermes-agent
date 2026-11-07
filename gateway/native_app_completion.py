@@ -21,6 +21,7 @@ class OriginalCallCompletion:
         self.stdin_owner, self.stdout_owner = call.reader.stdin_owner, call.reader.stdout_owner
         self.confirmed, self.publication = False, None
         self.declined = call.protocol_phase == "declined"
+        self.refusal_phase = call.protocol_phase if call.protocol_phase in ("declined", "receipt_store_full") else None
         call.require_current()
 
     def confirm(self):
@@ -37,8 +38,8 @@ class OriginalCallCompletion:
                 or call.commit_proof is not self.proof or call.commit_proof_sha256 != self.proof_sha256
                 or call.invocation is not self.invocation):
             refuse("native_original_completion_changed")
-        if self.declined:
-            if (call.protocol_phase != "declined" or call.decline_frame is not self.terminal
+        if self.refusal_phase is not None:
+            if (call.protocol_phase != self.refusal_phase or call.decline_frame is not self.terminal
                     or call.invocation is not None or self.origin is not None or self.lease is not None):
                 refuse("native_original_completion_changed")
             return

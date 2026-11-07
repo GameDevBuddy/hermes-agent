@@ -86,7 +86,7 @@ def execute(call):
             from gateway.native_app_result import denied_result
             from gateway.native_app_completion import reserve
             reserve(call, call.decline_frame).confirm()
-            return denied_result()
+            return denied_result(call.decline_frame)
         origin = _prepare(call, _phase(call, "prepare_native_call"))
         _wait(call, lambda: call.result_frame is not None)
         origin.require_current(owner=True)
