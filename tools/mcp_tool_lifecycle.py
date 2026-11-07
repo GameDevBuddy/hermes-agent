@@ -357,6 +357,12 @@ def _group_alive(pgid: Optional[int], my_pgid: Optional[int]) -> bool:
         return False
 
 
+def has_orphaned_mcp_children() -> bool:
+    """Observe pending cleanup without consuming PIDs or touching processes."""
+    with _core._lock:
+        return bool(_orphan_stdio_pids)
+
+
 def _kill_orphaned_mcp_children(include_active: bool = False, server_name: Optional[str] = None) -> None:
     """Best-effort reap of stdio MCP subprocesses: SIGTERM, wait 2s, SIGKILL survivors. By
     default only ``_orphan_stdio_pids`` are reaped so concurrent cron jobs / live sessions are

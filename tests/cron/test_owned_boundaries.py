@@ -109,12 +109,31 @@ async def test_native_lifecycle_gate_remains_unconditional(cron_fixture):
     assert not f.pools and not f.threads
 
 
-async def test_managed_orphan_reaper_is_refused_before_legacy_process_sweeping(cron_fixture):
+async def test_managed_idle_orphan_sweep_keeps_gateway_available(cron_fixture, monkeypatch):
+    from tools import mcp_tool_lifecycle as lifecycle
+    from hermes_owned_gateway import active
+    f = cron_fixture
+    f.activate()
+    monkeypatch.setattr(lifecycle, "_orphan_stdio_pids", set())
+    monkeypatch.setattr(lifecycle, "_kill_orphaned_mcp_children",
+                        lambda: pytest.fail("empty sweep must not reap processes"))
+    f.scheduler._sweep_mcp_orphans()
+    assert active() is f.source
+    assert f.source.cron_error is None and not f.source.cron_records
+
+
+async def test_managed_orphan_reaper_is_refused_before_legacy_process_sweeping(cron_fixture, monkeypatch):
+    from tools import mcp_tool_lifecycle as lifecycle
     from hermes_owned_gateway import OwnedGatewayUnknown
     f = cron_fixture
     f.activate()
+    pending = {12345}
+    monkeypatch.setattr(lifecycle, "_orphan_stdio_pids", pending)
+    monkeypatch.setattr(lifecycle, "_kill_orphaned_mcp_children",
+                        lambda: pytest.fail("managed sweep must not reap unowned processes"))
     with pytest.raises(OwnedGatewayUnknown):
         f.scheduler._sweep_mcp_orphans()
+    assert pending == {12345}
     assert f.source.cron_records[0].kind == "unsupported" and not f.pools
 
 
@@ -124,6 +143,7 @@ async def test_unmanaged_orphan_reaper_keeps_original_callback(cron_fixture, mon
     f = cron_fixture
     calls = []
     monkeypatch.setitem(sys.modules, "tools.mcp_tool_lifecycle", SimpleNamespace(
+        has_orphaned_mcp_children=lambda: True,
         _kill_orphaned_mcp_children=lambda: calls.append("legacy")))
     f.scheduler._sweep_mcp_orphans()
     assert calls == ["legacy"] and not f.owned._records

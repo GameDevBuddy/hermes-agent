@@ -4241,6 +4241,11 @@ def _resolve_max_parallel_workers() -> Optional[int]:
 def _sweep_mcp_orphans() -> None:
     """Reap MCP stdio orphans (only PIDs flagged by tools.mcp_tool._run_stdio's finally block);
     run AFTER jobs finish so live sessions are never touched."""
+    from tools.mcp_tool_lifecycle import has_orphaned_mcp_children
+    # An idle tick with no orphaned children has no process operation to admit.
+    # Keep the managed-runtime guard for an actual cleanup request, not a no-op.
+    if not has_orphaned_mcp_children():
+        return
     from cron.scheduler_owned import unsupported
     unsupported("legacy-process-orphan-reaping")
     try:
