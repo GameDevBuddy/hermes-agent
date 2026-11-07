@@ -54,8 +54,8 @@ def test_payload_sys_paths_order_repo_first(tmp_path):
     # (the sealed payload has no working editable install). Same order the
     # old rust shim composed PYTHONPATH in.
     assert entries == [
-        os.path.join(here, "..", "repo"),
-        os.path.join(here, "..", "venv", "Lib", "site-packages"),
+        str(tmp_path / "repo"),
+        str(tmp_path / "venv" / "Lib" / "site-packages"),
     ]
 
 
@@ -80,8 +80,8 @@ def test_configure_prepends_repo_then_site_packages(tmp_path):
     try:
         entries = ns["configure"](here, environ={})
         assert sys.path[:2] == entries
-        assert sys.path[0] == os.path.join(here, "..", "repo")
-        assert sys.path[1] == os.path.join(here, "..", "venv", "Lib", "site-packages")
+        assert sys.path[0] == str(tmp_path / "repo")
+        assert sys.path[1] == str(tmp_path / "venv" / "Lib" / "site-packages")
     finally:
         sys.path[:] = original
 
@@ -99,7 +99,7 @@ def test_configure_processes_site_pth_files(tmp_path):
     """
     ns = _load()
     here = str(tmp_path / "bin")
-    site = os.path.join(here, "..", "venv", "Lib", "site-packages")
+    site = str(tmp_path / "venv" / "Lib" / "site-packages")
     os.makedirs(site)
     added = tmp_path / "pth-added"
     added.mkdir()
@@ -108,7 +108,7 @@ def test_configure_processes_site_pth_files(tmp_path):
     original = list(sys.path)
     try:
         ns["configure"](here, environ={})
-        repo = os.path.join(here, "..", "repo")
+        repo = str(tmp_path / "repo")
         # Repo first, site second, .pth-added dirs after both.
         assert sys.path[:2] == [repo, site]
         assert sys.path.index(str(added)) > 1
@@ -206,7 +206,8 @@ def _render(tmp_path: Path) -> Path:
 
 
 @pytest.mark.platforms("windows")
-def test_rendered_wrapper_dispatches_to_the_entry_module(tmp_path):
+@pytest.mark.parametrize("extended_path", [False, True])
+def test_rendered_wrapper_dispatches_to_the_entry_module(tmp_path, extended_path):
     """The full wrapper contract without distlib: a rendered copy placed in
     bin/ next to a stub repo + venv resolves its own dir from sys.argv[0],
     imports hermes_cli.main off the payload paths, and returns main()'s
@@ -231,5 +232,6 @@ def test_rendered_wrapper_dispatches_to_the_entry_module(tmp_path):
     env = {k: v for k, v in os.environ.items() if k not in ("PYTHONPATH", "PYTHONHOME", "PYTHONPYCACHEPREFIX")}
     env["LOCALAPPDATA"] = str(tmp_path / "lad")
     python = Path(sys.base_prefix) / "python.exe" if sys.platform == "win32" else sys.executable
-    proc = subprocess.run([str(python), str(wrapper), "--version"], capture_output=True, text=True, env=env, check=False)
+    wrapper_arg = "\\\\?\\" + str(wrapper) if extended_path else str(wrapper)
+    proc = subprocess.run([str(python), "-B", "-I", "-S", wrapper_arg, "--version"], capture_output=True, text=True, env=env, check=False)
     assert proc.returncode == 7, proc.stderr

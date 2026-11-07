@@ -47,7 +47,9 @@ HERMES_SITE_REL = "__HERMES_SITE_REL__"
 def _join_rel(here, rel):
     """Join a forward-slash relative path (the minted-in convention, same
     as the payload manifest) onto a host dir without os.sep assumptions."""
-    return os.path.join(here, *rel.split("/"))
+    # Verbatim Windows paths (\\\\?\\) do not resolve '..' during file IO.
+    # Normalize before putting the bundled roots on sys.path.
+    return os.path.normpath(os.path.join(here, *rel.split("/")))
 
 
 def launcher_dir(argv0):
