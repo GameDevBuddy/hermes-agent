@@ -134,10 +134,20 @@ def _prune_terminal_temp_once() -> None:
 
 
 # --- Windows / MSYS path translation ---
+def _strip_windows_extended_prefix(path: str) -> str:
+    """Use ordinary drive/UNC paths for Git Bash and its native process cwd."""
+    if _IS_WINDOWS and path.startswith(("\\\\?\\", "//?/")):
+        path = path[4:]
+        if path[:4].upper() in ("UNC\\", "UNC/"):
+            path = "\\\\" + path[4:]
+    return path
+
+
 def _msys_to_windows_path(cwd: str) -> str:
     """``/c/Users/x`` / ``/cygdrive/c/..`` / ``/mnt/c/..`` -> native ``C:\\Users\\x`` so
     ``isdir``/``Popen(cwd=)`` find it. No-op off Windows, for empty input and for
     multi-segment POSIX paths like ``/home/x``; idempotent on native paths."""
+    cwd = _strip_windows_extended_prefix(cwd)
     m = _IS_WINDOWS and cwd and re.match(r'^/(?:(?:cygdrive|mnt)/)?([a-zA-Z])(/.*)?$', cwd)
     if not m:
         return cwd
@@ -149,6 +159,7 @@ def _resolve_local_initial_cwd(cwd: str) -> str:
     """Resolve the initial cwd to an absolute host path. A relative ``TERMINAL_CWD``
     naming the launch directory would otherwise make the wrapper ``cd`` *inside*
     the project; anchor it once so ``Popen(cwd=)`` and the in-shell ``cd`` agree."""
+    cwd = _strip_windows_extended_prefix(cwd)
     expanded = os.path.expanduser(cwd) if cwd else os.getcwd()
     if _IS_WINDOWS:
         expanded = _msys_to_windows_path(expanded)
@@ -171,6 +182,7 @@ def _resolve_local_initial_cwd(cwd: str) -> str:
 def _windows_to_msys_path(cwd: str) -> str:
     """Native ``C:\\Users\\x`` -> Git Bash ``/c/Users/x`` so ``builtin cd`` resolves
     it. No-op off Windows / for non-drive paths."""
+    cwd = _strip_windows_extended_prefix(cwd)
     m = _IS_WINDOWS and cwd and re.match(r'^([a-zA-Z]):[\\/]*(.*)$', cwd)
     if not m:
         return cwd
@@ -182,6 +194,7 @@ def _bash_safe_path(path: str) -> str:
     """*path* safe to embed in a Git Bash script: ``C:\\Users\\x`` / ``C:/Users/x``
     become ``/c/Users/x`` (MSYS argument conversion mangles ``C:/`` forms) and
     leftover backslashes are normalized so bash does not eat ``\\U``. No-op off Windows."""
+    path = _strip_windows_extended_prefix(path)
     return _windows_to_msys_path(path).replace("\\", "/") if _IS_WINDOWS and path else path
 
 
@@ -1113,7 +1126,7 @@ class LocalEnvironment(BaseEnvironment):
             args, text=True, env=_make_run_env(self.env), encoding="utf-8", errors="replace",
             stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
             stdin=subprocess.PIPE if stdin_data is not None else subprocess.DEVNULL,
-            start_new_session=True, cwd=self.cwd,
+            start_new_session=True, cwd=_strip_windows_extended_prefix(self.cwd),
             **({"creationflags": windows_hide_flags()} if _IS_WINDOWS else {}))
         if not _IS_WINDOWS and _owned_terminal.find(proc) is None:
             with contextlib.suppress(ProcessLookupError):

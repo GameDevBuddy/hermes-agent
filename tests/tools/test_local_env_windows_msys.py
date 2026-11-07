@@ -43,6 +43,7 @@ from tools.environments.local import (
     _make_run_env,
     _msys_to_windows_path,
     _quote_bash_path,
+    _resolve_local_initial_cwd,
     _resolve_safe_cwd,
     _sanitize_subprocess_env,
     _windows_to_msys_path,
@@ -107,6 +108,36 @@ class TestBashSafePath:
 # ---------------------------------------------------------------------------
 # _resolve_safe_cwd — Windows fast path
 # ---------------------------------------------------------------------------
+
+@pytest.mark.platforms("windows")
+def test_extended_paths_are_normalized_for_bash_and_popen(tmp_path):
+    for extended, native, bash in (
+        (r"\\?\D:\foo\bar", r"D:\foo\bar", "/d/foo/bar"),
+        ("//?/D:/foo/bar", "D:/foo/bar", "/d/foo/bar"),
+        (r"\\?\UNC\server\share\foo", r"\\server\share\foo", "//server/share/foo"),
+        ("//?/UNC/server/share/foo", "\\\\server/share/foo", "//server/share/foo"),
+    ):
+        assert _msys_to_windows_path(extended) == native
+        assert _resolve_local_initial_cwd(extended) == native
+        assert _windows_to_msys_path(extended) == (native if native.startswith("\\\\") else bash)
+        assert _bash_safe_path(extended) == bash
+
+    from tools.environments import local_owned
+
+    with patch.object(local_owned, "popen", wraps=local_owned.popen) as popen:
+        env = LocalEnvironment(cwd="\\\\?\\" + str(tmp_path), timeout=10)
+        try:
+            assert env.cwd == str(tmp_path)
+            wrapped = env._wrap_command("echo hello", "\\\\?\\" + str(tmp_path))
+            assert f"builtin cd -- {_quote_bash_path(str(tmp_path))} || exit 126" in wrapped
+            result = env.execute("echo hello")
+            assert result["returncode"] == 0
+            assert result["output"].strip() == "hello"
+            assert popen.call_args_list
+            assert all(call.kwargs["cwd"] == str(tmp_path) for call in popen.call_args_list)
+        finally:
+            env.cleanup()
+
 
 @pytest.mark.platforms("windows")
 class TestResolveSafeCwdWindows:
