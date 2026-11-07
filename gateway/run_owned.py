@@ -9,6 +9,22 @@ from hermes_owned_gateway import OwnedGatewayUnknown
 
 logger = logging.getLogger(__name__)
 
+
+def _prepare_windows_numeric_runtime():
+    """Load installed NumPy before a background reader blocks on piped stdin.
+
+    Windows OpenBLAS/Fortran initialization inspects stdin while holding the
+    DLL loader lock. An outstanding pipe read can deadlock both that import
+    and later thread creation (numpy/numpy#24290). No audio device is opened.
+    """
+    if os.name != "nt":
+        return
+    import importlib
+    import importlib.util
+    if importlib.util.find_spec("numpy") is not None:
+        importlib.import_module("numpy")
+
+
 def _require_original_source(source):
     from hermes_owned_gateway import OwnedGatewaySource, current
     if type(source) is not OwnedGatewaySource or current(source.contract) is not source:
@@ -87,6 +103,7 @@ async def start_managed(source, config=None):
     source.bind_runner(runner)
     settlement = construct_settlement(source, runner)
     try:
+        _prepare_windows_numeric_runtime()
         await initialize_gateway_runtime(runner)
         boot._start_gateway_early_environment_probe()
         canonical._enable_multiplex_log_routing(runner.config)
