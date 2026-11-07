@@ -208,6 +208,54 @@ def read_context(db, ordinary):
                     gate.condition.notify_all()
 
 
+def refresh_turn_lease_from_worker(db, session_id, holder, expires_at):
+    """Renew on the exclusive connection; None leaves the ordinary/owner path unchanged.
+
+    The scheduler may update only the holder-qualified expiry, not run an owner
+    transcript transaction. A second connection cannot write while this lease
+    holds SQLite's exclusive lock.
+    """
+    lease = db._native_read_gate.lease
+    if lease is None or threading.current_thread() is lease.owner:
+        return None
+    with db._lock:
+        # The native call may have released its connection while this tick waited.
+        lease = db._native_read_gate.lease
+        if lease is None:
+            return None
+        with lease.io_lock:
+            db._raise_if_db_corrupt(storage=True)
+            lease.require_current()
+            conn, worker = lease.connection, threading.current_thread()
+
+            def authorize(operation, first, second, database, trigger):
+                if threading.current_thread() is worker and trigger is None:
+                    if operation == sqlite3.SQLITE_TRANSACTION:
+                        return sqlite3.SQLITE_OK
+                    if (operation == sqlite3.SQLITE_UPDATE and database == "main"
+                            and first == "session_turn_leases" and second == "expires_at"):
+                        return sqlite3.SQLITE_OK
+                return lease.authorize(operation, first, second, database, trigger)
+
+            conn.set_authorizer(authorize)
+            try:
+                conn.execute("BEGIN IMMEDIATE")
+                try:
+                    conversation_id = db._session_turn_lease_key_on_conn(conn, session_id)
+                    renewed = conn.execute(
+                        "UPDATE session_turn_leases SET expires_at = ? "
+                        "WHERE conversation_id = ? AND holder = ?", (expires_at, conversation_id, holder),
+                    ).rowcount > 0
+                    conn.commit()
+                    return renewed
+                except BaseException:
+                    conn.rollback()
+                    raise
+            finally:
+                # Expire the cached UPDATE too: SQLite authorizes at prepare time.
+                conn.set_authorizer(lease.authorizer)
+
+
 def require_transaction_entry(db):
     lease = db._native_read_gate.lease
     if lease is not None:

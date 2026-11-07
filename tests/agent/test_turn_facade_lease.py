@@ -252,6 +252,71 @@ def test_lock_tolerance_never_outlives_the_committed_row_expiry(tmp_path, monkey
     db.close()
 
 
+def test_native_turn_survives_worker_refresh_and_starts_next_turn(tmp_path, monkeypatch, caplog):
+    """A native call may still be waiting for approval when the scheduler renews."""
+    from concurrent.futures import ThreadPoolExecutor
+
+    import hermes_state_compression
+    from agent import turn_facade_lease
+    from hermes_state import SessionDB
+    from hermes_state_native_lease import NativeWriterLease
+
+    clock = _MovingClock(1000.0)
+    fake_time = SimpleNamespace(time=clock.time, monotonic=time.monotonic, sleep=time.sleep)
+    monkeypatch.setattr(turn_facade_lease, "time", fake_time)
+    monkeypatch.setattr(hermes_state_compression, "time", fake_time)
+    monkeypatch.setattr(
+        "agent.turn_liveness.resolve_turn_liveness_settings", lambda cfg: (None, 1.0)
+    )
+    db = SessionDB(tmp_path / "state.db")
+    db.create_session("s1", source="test")
+    interrupts, holders = [], []
+    agent = _agent(db, interrupt=lambda message, **kw: interrupts.append((message, kw)))
+    try:
+        for turn in ("first", "second"):
+            admission = admit_durable_turn_lease(
+                agent, session_id="s1", relay_turn_id=turn,
+                task_context={"session_id": "s1", "platform": "test"},
+                conversation_history=None,
+            )
+            assert admission.early_result is None
+            lease = admission.lease
+            assert lease is not None
+            holders.append(lease.holder)
+            lease.start()
+            native = NativeWriterLease(db, object()).acquire()
+            try:
+                assert lease.is_turn_active()
+                db.append_message("s1", "user", turn)
+                if turn == "first":
+                    expiry = db.session_turn_lease_expires_at("s1", lease.holder)
+                    assert expiry is not None
+                    clock.set(clock.time() + lease.refresh_interval)
+                    # The actual refresh_tick, on a thread other than the native owner.
+                    with ThreadPoolExecutor(max_workers=1) as worker:
+                        assert worker.submit(lease.refresh_tick).result(timeout=5) is None
+                    renewed = db.session_turn_lease_expires_at("s1", lease.holder)
+                    assert renewed is not None and renewed > expiry
+                    assert lease._authority_deadline <= renewed
+                    assert interrupts == [] and lease.interrupt_message is None
+                    assert native.phase == "held" and native.error is None
+                db.append_message("s1", "assistant", f"{turn} answer")
+            finally:
+                lease.stop_refresher()
+                lease.join_threads()
+                native.release()
+                lease.release()
+            assert db.session_turn_lease_expires_at("s1", lease.holder) is None
+        assert holders[0] != holders[1]
+        assert interrupts == [] and agent._interrupt_requested is False
+        assert "native_writer_original_thread_required" not in caplog.text
+        assert [row["content"] for row in db.get_messages("s1")] == [
+            "first", "first answer", "second", "second answer",
+        ]
+    finally:
+        db.close()
+
+
 def test_interrupt_turn_only_while_active():
     agent = _agent(_Db())
     calls = []

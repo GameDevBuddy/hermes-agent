@@ -378,7 +378,8 @@ def test_run_conversation_lease_wait_honors_interrupt(monkeypatch):
 
 
 def test_pre_admission_user_row_in_history_is_flushed_once():
-    db = MagicMock()
+    # An ordinary store double must not fabricate a native pin book via __getattr__.
+    db = MagicMock(spec=SessionDB)
     db.append_messages_batch.return_value = [1, 2]
     agent = AIAgent.__new__(AIAgent)
     agent._session_db = db

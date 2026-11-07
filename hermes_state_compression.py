@@ -820,6 +820,10 @@ class SessionCompressionMixin:
         if not session_id or not holder:
             return False
         expires_at = time.time() + max(0.1, float(ttl_seconds))
+        from hermes_state_native_lease import refresh_turn_lease_from_worker
+        native_result = refresh_turn_lease_from_worker(self, session_id, holder, expires_at)
+        if native_result is not None:
+            return native_result
         def _do(conn):
             conversation_id = self._session_turn_lease_key_on_conn(conn, session_id)
             return conn.execute(

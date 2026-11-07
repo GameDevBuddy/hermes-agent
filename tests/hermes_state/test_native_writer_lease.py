@@ -102,6 +102,58 @@ def test_foreign_worker_refuses_before_callback_but_reads_use_original_connectio
     assert lease.phase == "held" and lease.error is None
 
 
+def test_native_refresh_keeps_successor_holder_and_interrupts_lost_turn(db, caplog):
+    from concurrent.futures import ThreadPoolExecutor
+    from types import SimpleNamespace
+
+    from agent.turn_facade_lease import DurableTurnLease
+
+    assert db.try_acquire_session_turn_lease("fixture", "old")
+    NativeWriterLease(db, object()).acquire()
+    db.release_session_turn_lease("fixture", "old")
+    assert db.try_acquire_session_turn_lease("fixture", "successor")
+    successor_expiry = db.session_turn_lease_expires_at("fixture", "successor")
+    interrupts = []
+    agent = SimpleNamespace(
+        session_id="fixture", interrupt=lambda message, **kw: interrupts.append((message, kw)),
+    )
+    turn = DurableTurnLease(agent, db, "fixture", "old")
+    turn.turn_active = True
+    with ThreadPoolExecutor(max_workers=1) as worker:
+        assert worker.submit(turn.refresh_tick).result(timeout=5) is False
+    assert db.session_turn_lease_expires_at("fixture", "successor") == successor_expiry
+    assert db.session_turn_lease_expires_at("fixture", "old") is None
+    assert interrupts == [(
+        "Session turn lease lost; stopping to protect the transcript.",
+        {"hard_cancel": True, "tool_reason": "session turn lease lost"},
+    )]
+    assert "native_writer_original_thread_required" not in caplog.text
+
+
+def test_native_refresh_does_not_allow_foreign_transcript_writes_or_cached_updates(db):
+    from concurrent.futures import ThreadPoolExecutor
+
+    assert db.try_acquire_session_turn_lease("fixture", "holder")
+    lease = NativeWriterLease(db, object()).acquire()
+    commits = list(lease.commits)
+    with ThreadPoolExecutor(max_workers=1) as worker:
+        assert worker.submit(db.refresh_session_turn_lease, "fixture", "holder").result(timeout=5)
+        with pytest.raises(NativeSQLFailure, match="native_writer_original_thread_required"):
+            worker.submit(db.append_message, "fixture", "assistant", "foreign").result(timeout=5)
+        # Exact renewal statement must be re-authorized after the scoped write permission ends.
+        with pytest.raises(sqlite3.DatabaseError, match="authorized"):
+            worker.submit(
+                db._conn.execute,
+                "UPDATE session_turn_leases SET expires_at = ? "
+                "WHERE conversation_id = ? AND holder = ?", (0.0, "fixture", "holder"),
+            ).result(timeout=5)
+    assert lease.commits == commits  # maintenance is not an owner transcript commit
+    db.append_message("fixture", "assistant", "owner")
+    assert [row["content"] for row in db.get_messages("fixture")] == ["owner"]
+    assert lease.commits[-1].thread is lease.owner
+    assert lease.phase == "held" and lease.error is None
+
+
 def test_original_callback_read_and_reentry_do_not_reacquire_nonreentrant_lock(db):
     lease = NativeWriterLease(db, object()).acquire()
     returned = object()
