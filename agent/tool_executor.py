@@ -939,7 +939,11 @@ def _run_sequential_tool_execution_middleware(
         future = prepared.future
     else:
         authorization_gate = None
-    if function_name in _NEVER_PARALLEL_TOOLS:
+    from agent.native_receipt_origin import is_native_tool_name
+    if function_name in _NEVER_PARALLEL_TOOLS or is_native_tool_name(function_name):
+        # Native preparation, App approval and canonical saving share the
+        # assistant-row worker. Its protocol owns the deadline; a disposable
+        # tool thread would break that association before App approval.
         return _run_agent_tool_execution_middleware(agent, **kwargs)
 
     from tools.daemon_pool import DaemonThreadPoolExecutor

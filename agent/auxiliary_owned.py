@@ -42,6 +42,25 @@ def find(client):
 def fail(record, error):
     source = record.source
     with source._state_lock:
+        from agent.auxiliary_unavailable import ProviderNotConfiguredError
+        from agent.primary_owned import links
+        owner = record if record.kind == "primary-agent" else record.primary_owner
+        # Missing setup before any SDK work is a request refusal, not lost
+        # custody. Settle only this empty construction; never revive an unknown
+        # source or excuse a partial SDK/HTTP constructor (even of this type).
+        if (isinstance(error, ProviderNotConfiguredError)
+                and record.kind in ("primary-agent", "resolve")
+                and record.phase == "constructing" and record.error is None
+                and record.client is None and record.inner is None
+                and source.auxiliary_error is None
+                and owner is not None and owner.primary_agent is not None
+                and owner.phase == "constructing"
+                and all(client is None for client in links(owner.primary_agent))
+                and all(child is record or (child.phase == "empty" and child.error is None)
+                        for child in owner.children)):
+            record.require_current(creating=True)
+            record.phase = "empty"
+            return
         if record.error is None:
             # Keep the original exception/traceback: failed constructors can retain an unreturned self.
             record.error = error

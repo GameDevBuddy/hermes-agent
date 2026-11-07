@@ -5,13 +5,15 @@ import pytest
 
 from agent import auxiliary_owned as owned, primary_owned as primary
 from agent.auxiliary_owned_close import shutdown_owned
+from agent.auxiliary_unavailable import ProviderNotConfiguredError
 from hermes_owned_gateway import OwnedGatewayUnknown
 from tests.agent.auxiliary_owned_fixture import MockSDK, allow_normal_shutdown
 from tests.agent.primary_owned_fixture import construct_actual_agent, minimal_primary_init, primary_fixture
 
 
-def test_partial_primary_constructor_keeps_original_self_agent_and_exception(monkeypatch, tmp_path):
-    error = RuntimeError("partial-primary-sdk")
+@pytest.mark.parametrize("error_type", [RuntimeError, ProviderNotConfiguredError])
+def test_partial_primary_constructor_keeps_original_self_agent_and_exception(monkeypatch, tmp_path, error_type):
+    error = error_type("partial-primary-sdk")
 
     class FailedSDK(MockSDK):
         def __init__(self, **kwargs):
@@ -35,8 +37,9 @@ def test_partial_primary_constructor_keeps_original_self_agent_and_exception(mon
     asyncio.run(scenario())
 
 
-def test_agent_initialization_failure_keeps_already_returned_client(monkeypatch, tmp_path):
-    error = RuntimeError("after-primary-creation")
+@pytest.mark.parametrize("error_type", [RuntimeError, ProviderNotConfiguredError])
+def test_agent_initialization_failure_keeps_already_returned_client(monkeypatch, tmp_path, error_type):
+    error = error_type("after-primary-creation")
 
     def failed_init(agent, **kwargs):
         minimal_primary_init(agent, **kwargs)

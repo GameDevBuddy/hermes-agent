@@ -3,6 +3,7 @@ import threading
 import time
 import functools
 import logging
+from types import BuiltinMethodType
 
 from agent.auxiliary_owned_close import _same_callable
 from agent.memory_provider import spawn_context_thread
@@ -10,6 +11,14 @@ from tools import terminal_tool_owned as owned
 from tools.environments.local_owned import require_process
 
 logger = logging.getLogger(__name__)
+
+
+def _same_pipe_method(left, right):
+    # Built-in IO methods have no __func__ and are rebound on each lookup.
+    # Their exact-type equality checks the C method; also pin the pipe by identity.
+    return (_same_callable(left, right)
+            or (type(left) is BuiltinMethodType and type(right) is BuiltinMethodType
+                and left.__self__ is right.__self__ and left == right))
 
 
 def wait_on_owner(method):
@@ -27,12 +36,12 @@ def _require_io(record):
     require_process(parent, record.process_origin)
     index = 0 if record.kind == "pipe-reader" else 2
     if (record.pipe is not parent.pipes[index] or record.thread is not record.obj
-            or not _same_callable(record.pipe.close, record.close_method)):
+            or not _same_pipe_method(record.pipe.close, record.close_method)):
         owned.refuse(record, "terminal-original-pipe-worker-association-changed")
     if record.kind == "pipe-writer" and (
             getattr(record.pipe, "buffer", record.pipe) is not record.target
-            or not _same_callable(record.target.write, record.io_method)
-            or not _same_callable(record.target.close, record.target_close)):
+            or not _same_pipe_method(record.target.write, record.io_method)
+            or not _same_pipe_method(record.target.close, record.target_close)):
         owned.refuse(record, "terminal-original-stdin-target-or-method-changed")
 
 
@@ -70,7 +79,7 @@ def _start(parent, kind, pipe, body, output=None):
 def _read(record):
     while True:
         _require_io(record)
-        if not _same_callable(record.pipe.read, record.io_method):
+        if not _same_pipe_method(record.pipe.read, record.io_method):
             owned.refuse(record, "terminal-original-read-method-changed")
         piece = record.io_method(4096)
         _require_io(record)
@@ -107,8 +116,8 @@ def pipe_stdin(proc, data):
         raw = data.encode("utf-8", "surrogateescape") if isinstance(data, str) else data
         worker.payload = raw
         if (getattr(worker.pipe, "buffer", worker.pipe) is not worker.target
-                or not _same_callable(worker.target.write, worker.io_method)
-                or not _same_callable(worker.target.close, worker.target_close)):
+                or not _same_pipe_method(worker.target.write, worker.io_method)
+                or not _same_pipe_method(worker.target.close, worker.target_close)):
             owned.refuse(worker, "terminal-original-stdin-target-changed")
         try:
             worker.written = worker.io_method(raw)
