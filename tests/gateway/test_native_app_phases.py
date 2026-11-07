@@ -83,18 +83,27 @@ RECEIPT_STORE_FULL_ERROR = {
     "message": "Native receipt store full; this request did not run. You can continue chatting.",
 }
 
+EDITOR_NOT_CONNECTED_ERROR = {
+    "code": -32043,
+    "message": "Editor not connected. Open this project in the editor and try again.",
+}
 
-def test_original_canonical_socket_receipt_store_full_allocates_no_native_or_sql_pin(monkeypatch, tmp_path):
+
+@pytest.mark.parametrize("error,phase", [
+    (RECEIPT_STORE_FULL_ERROR, "receipt_store_full"),
+    (EDITOR_NOT_CONNECTED_ERROR, "editor_not_connected"),
+], ids=["receipt-store-full", "editor-not-connected"])
+def test_original_canonical_socket_refusal_allocates_no_native_or_sql_pin(monkeypatch, tmp_path, error, phase):
     case = CallCase(monkeypatch, tmp_path)
 
-    def full(current):
+    def refusal(current):
         frame = {"jsonrpc": "2.0", "id": current.slot._native_request_candidate_id,
-                 "error": dict(RECEIPT_STORE_FULL_ERROR)}
+                 "error": dict(error)}
         assert not resolve(object(), frame)
         assert current.call.decline_frame is None
         current.connection._resolve_response(frame)
         assert current.call.decline_frame is frame
-        assert current.call.protocol_phase == current.call.request.native_phase == "receipt_store_full"
+        assert current.call.protocol_phase == current.call.request.native_phase == phase
         assert current.call.worker_event.is_set() and current.call.error is None
         assert current.call.result_frame is None and current.call.raw_result is None
         assert current.call.invocation is None and not current.call.phases
@@ -103,26 +112,30 @@ def test_original_canonical_socket_receipt_store_full_allocates_no_native_or_sql
         assert current.slot.origin is None
 
     try:
-        bound_exchange(case, full)
+        bound_exchange(case, refusal)
     finally:
         case.close()
 
 
-@pytest.mark.parametrize("change", [
-    {"error": {**RECEIPT_STORE_FULL_ERROR, "message": "different"}},
-    {"error": {**RECEIPT_STORE_FULL_ERROR, "message": DECLINE["message"]}},
-    {"error": {"code": -32042}},
-    {"error": {**RECEIPT_STORE_FULL_ERROR, "data": {}}},
-    {"result": "not an editor result"},
-    {"extra": True},
-    {"jsonrpc": "1.0"},
-])
-def test_receipt_store_full_rejects_changed_wire_shape(monkeypatch, tmp_path, change):
+@pytest.mark.parametrize("error", [RECEIPT_STORE_FULL_ERROR, EDITOR_NOT_CONNECTED_ERROR],
+                         ids=["receipt-store-full", "editor-not-connected"])
+@pytest.mark.parametrize("change", ["message", "decline-message", "missing-message", "error-data",
+                                    "result", "extra", "jsonrpc"])
+def test_preparation_refusal_rejects_changed_wire_shape(monkeypatch, tmp_path, error, change):
     case = CallCase(monkeypatch, tmp_path)
 
     def invalid(current):
+        changes = {
+            "message": {"error": {**error, "message": "different"}},
+            "decline-message": {"error": {**error, "message": DECLINE["message"]}},
+            "missing-message": {"error": {"code": error["code"]}},
+            "error-data": {"error": {**error, "data": {}}},
+            "result": {"result": "not an editor result"},
+            "extra": {"extra": True},
+            "jsonrpc": {"jsonrpc": "1.0"},
+        }
         frame = {"jsonrpc": "2.0", "id": current.slot._native_request_candidate_id,
-                 "error": dict(RECEIPT_STORE_FULL_ERROR), **change}
+                 "error": dict(error), **changes[change]}
         with pytest.raises(RuntimeStoreError, match="native_original_decline_unavailable") as observed:
             current.connection._resolve_response(frame)
         assert current.call.error is observed.value and current.call.traceback is not None
@@ -135,9 +148,11 @@ def test_receipt_store_full_rejects_changed_wire_shape(monkeypatch, tmp_path, ch
         case.close()
 
 
+@pytest.mark.parametrize("error", [RECEIPT_STORE_FULL_ERROR, EDITOR_NOT_CONNECTED_ERROR],
+                         ids=["receipt-store-full", "editor-not-connected"])
 @pytest.mark.parametrize("state", ["source", "prepared", "result_received", "declined", "released",
                                     "invocation", "phases", "pin"])
-def test_receipt_store_full_rejects_execution_state(monkeypatch, tmp_path, state):
+def test_preparation_refusal_rejects_execution_state(monkeypatch, tmp_path, error, state):
     case = CallCase(monkeypatch, tmp_path)
 
     def invalid(current):
@@ -150,7 +165,7 @@ def test_receipt_store_full_rejects_execution_state(monkeypatch, tmp_path, state
         else:
             current.call.protocol_phase = state
         frame = {"jsonrpc": "2.0", "id": current.slot._native_request_candidate_id,
-                 "error": dict(RECEIPT_STORE_FULL_ERROR)}
+                 "error": dict(error)}
         with pytest.raises(RuntimeStoreError, match="native_original_decline_unavailable") as observed:
             current.connection._resolve_response(frame)
         assert current.call.error is observed.value and current.call.traceback is not None

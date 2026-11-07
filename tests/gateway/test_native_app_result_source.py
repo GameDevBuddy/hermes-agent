@@ -13,7 +13,7 @@ from hermes_state_runtime import RuntimeStoreError
 from tests.gateway.native_app_call_fixture import CallCase
 from tests.gateway.native_app_context_fixture import line
 from tests.gateway.native_app_producer_fixture import ProducerCase
-from tests.gateway.test_native_app_phases import RECEIPT_STORE_FULL_ERROR, bound_exchange
+from tests.gateway.test_native_app_phases import EDITOR_NOT_CONNECTED_ERROR, RECEIPT_STORE_FULL_ERROR, bound_exchange
 
 
 class ContinuingProducerCase(ProducerCase):
@@ -30,12 +30,16 @@ class ContinuingProducerCase(ProducerCase):
             super()._worker()
 
 
-def test_receipt_store_full_saves_ordinary_error_and_next_request_works(monkeypatch, tmp_path):
+@pytest.mark.parametrize("error,phase", [
+    (RECEIPT_STORE_FULL_ERROR, "receipt_store_full"),
+    (EDITOR_NOT_CONNECTED_ERROR, "editor_not_connected"),
+], ids=["receipt-store-full", "editor-not-connected"])
+def test_preparation_refusal_saves_ordinary_error_and_next_request_works(monkeypatch, tmp_path, error, phase):
     case = ContinuingProducerCase(monkeypatch, tmp_path)
     try:
         case.begin()
         frame = {"jsonrpc": "2.0", "id": case.slot._native_request_candidate_id,
-                 "error": dict(RECEIPT_STORE_FULL_ERROR)}
+                 "error": dict(error)}
 
         async def original_response():
             assert case.connection is not None
@@ -46,14 +50,15 @@ def test_receipt_store_full_saves_ordinary_error_and_next_request_works(monkeypa
         assert case.worker_error is None and case.control_error is None
         assert case.result is not None and case.message is not None
         assert json.loads(case.result) == {
-            "error": "receipt_store_full", "isError": True,
-            "message": RECEIPT_STORE_FULL_ERROR["message"], "replayAllowed": False,
+            "error": phase, "isError": True,
+            "message": error["message"], "replayAllowed": False,
         }
         first_call, first_slot = case.call, case.slot
         context, owner, keeper = case.call.context, case.owner, case.keeper
         assert first_call.terminal is frame and first_call.error is None
-        assert first_call.protocol_phase == first_call.request.native_phase == "receipt_store_full"
+        assert first_call.protocol_phase == first_call.request.native_phase == phase
         assert first_call.completion.declined is False
+        assert first_call.completion.refusal_phase == phase
         assert first_call.invocation is None and not first_call.phases
         assert first_call.result_frame is None and first_call.raw_result is None
         assert first_call.origin is None and first_call.writer_lease is None
@@ -66,7 +71,7 @@ def test_receipt_store_full_saves_ordinary_error_and_next_request_works(monkeypa
         assert row is not None
         stored = row[0]
         assert stored == case.message["content"]
-        assert "receipt_store_full" in stored and "declined" not in stored
+        assert phase in stored and "declined" not in stored
         assert not any(value["event"] in ("native_call_prepared", "native_call_committed", "native_call_released")
                        for value in case.events())
 
@@ -110,7 +115,8 @@ def test_receipt_store_full_saves_ordinary_error_and_next_request_works(monkeypa
 
 
 @pytest.mark.parametrize("copied", [False, True], ids=["same-request-alias", "copied-request"])
-@pytest.mark.parametrize("error", [DECLINE, RECEIPT_STORE_FULL_ERROR], ids=["decline", "receipt-store-full"])
+@pytest.mark.parametrize("error", [DECLINE, RECEIPT_STORE_FULL_ERROR, EDITOR_NOT_CONNECTED_ERROR],
+                         ids=["decline", "receipt-store-full", "editor-not-connected"])
 def test_original_native_response_refuses_foreign_request_identity(monkeypatch, tmp_path, copied, error):
     case = CallCase(monkeypatch, tmp_path)
 

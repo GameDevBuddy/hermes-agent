@@ -10,11 +10,20 @@ RECEIPT_STORE_FULL = {
     "code": -32042,
     "message": "Native receipt store full; this request did not run. You can continue chatting.",
 }
+EDITOR_NOT_CONNECTED = {
+    "code": -32043,
+    "message": "Editor not connected. Open this project in the editor and try again.",
+}
 
 
 def denied_result(frame):
     error = frame["error"]
-    reason = "receipt_store_full" if error == RECEIPT_STORE_FULL else "native_request_declined"
+    if error == RECEIPT_STORE_FULL:
+        reason = "receipt_store_full"
+    elif error == EDITOR_NOT_CONNECTED:
+        reason = "editor_not_connected"
+    else:
+        reason = "native_request_declined"
     return json.dumps({"error": reason, "isError": True,
                        "message": error["message"], "replayAllowed": False}, separators=(",", ":"))
 
@@ -33,12 +42,18 @@ def _original_call(connection, frame):
 
 def _preparation_refusal(call, frame):
     if (set(frame) != {"jsonrpc", "id", "error"} or frame["jsonrpc"] != "2.0"
-            or frame["error"] not in (DECLINE, RECEIPT_STORE_FULL) or call.protocol_phase != "awaiting_prepare"
+            or frame["error"] not in (DECLINE, RECEIPT_STORE_FULL, EDITOR_NOT_CONNECTED)
+            or call.protocol_phase != "awaiting_prepare"
             or call.phases or call.invocation is not None or call.slot._native_pin is not None):
         refuse("native_original_decline_unavailable")
     # Reuse the pre-Prepare terminal storage, not the user-decline status.
     call.decline_frame = frame
-    phase = "receipt_store_full" if frame["error"] == RECEIPT_STORE_FULL else "declined"
+    if frame["error"] == RECEIPT_STORE_FULL:
+        phase = "receipt_store_full"
+    elif frame["error"] == EDITOR_NOT_CONNECTED:
+        phase = "editor_not_connected"
+    else:
+        phase = "declined"
     call.protocol_phase, call.request.native_phase = phase, phase
     call.worker_event.set()
 
