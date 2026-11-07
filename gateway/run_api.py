@@ -450,6 +450,11 @@ class GatewayRuntimeAPI:
         )
         state = getattr(self.web_app, 'state', None)
         scope['app'] = self.web_app
+        # Both native and web-ticket sockets enter through this owned listener.
+        # Carry its identity through the dashboard's existing authentication gate
+        # too; the App uses that ticket path before the private stdin context bind.
+        # This observation grants neither operator status nor native execution.
+        scope['hermes.gdb_original_source_server'] = self._gdb_original_source_server
         ws = WebSocket(scope, receive, send)
         ticket, reason = _gateway_ws_ticket_from_subprotocol(ws)
         if reason == 'none' or ws.headers.get('origin'):
@@ -499,7 +504,6 @@ class GatewayRuntimeAPI:
             return
         # The ticket names the served profile; this connection binds to that home's authority.
         scope['hermes.session_authority'] = authority
-        scope['hermes.gdb_original_source_server'] = self._gdb_original_source_server
         from gateway.session_contract import CANONICAL_GATEWAY_PROTOCOL
         from tui_gateway.ws import handle_ws
         from gateway.session_authorities import owner_scope
