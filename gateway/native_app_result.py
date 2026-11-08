@@ -14,6 +14,10 @@ EDITOR_NOT_CONNECTED = {
     "code": -32043,
     "message": "Editor not connected. Open this project in the editor and try again.",
 }
+TIMEOUT = {
+    "code": -32044,
+    "message": "Editor request timed out; not run. You can continue chatting.",
+}
 
 
 def denied_result(frame):
@@ -22,6 +26,8 @@ def denied_result(frame):
         reason = "receipt_store_full"
     elif error == EDITOR_NOT_CONNECTED:
         reason = "editor_not_connected"
+    elif error == TIMEOUT:
+        reason = "native_request_timed_out"
     else:
         reason = "native_request_declined"
     return json.dumps({"error": reason, "isError": True,
@@ -42,9 +48,11 @@ def _original_call(connection, frame):
 
 def _preparation_refusal(call, frame):
     if (set(frame) != {"jsonrpc", "id", "error"} or frame["jsonrpc"] != "2.0"
-            or frame["error"] not in (DECLINE, RECEIPT_STORE_FULL, EDITOR_NOT_CONNECTED)
+            or frame["error"] not in (DECLINE, RECEIPT_STORE_FULL, EDITOR_NOT_CONNECTED, TIMEOUT)
+            or frame["error"] == TIMEOUT and not call.timeout_requested
             or call.protocol_phase != "awaiting_prepare"
-            or call.phases or call.invocation is not None or call.slot._native_pin is not None):
+            or call.phases or call.invocation is not None or call.slot._native_pin is not None
+            or call.origin is not None or call.writer_lease is not None):
         refuse("native_original_decline_unavailable")
     # Reuse the pre-Prepare terminal storage, not the user-decline status.
     call.decline_frame = frame
@@ -52,6 +60,8 @@ def _preparation_refusal(call, frame):
         phase = "receipt_store_full"
     elif frame["error"] == EDITOR_NOT_CONNECTED:
         phase = "editor_not_connected"
+    elif frame["error"] == TIMEOUT:
+        phase = "timed_out"
     else:
         phase = "declined"
     call.protocol_phase, call.request.native_phase = phase, phase
@@ -98,7 +108,8 @@ def resolve(connection, frame):
         if call.result_frame is not None or call.decline_frame is not None:
             refuse("native_original_result_replay")
         if "error" in frame:
-            _preparation_refusal(call, frame)
+            with call.reader.source._state_lock:
+                _preparation_refusal(call, frame)
         else:
             _native_result(call, frame)
         return True

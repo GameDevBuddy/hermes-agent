@@ -11,28 +11,47 @@ from gateway.native_source_runtime import MAX_SOURCE_REFERENCE_BYTES, refuse
 def _wait(call, ready):
     while True:
         call.worker_event.clear()
-        if call.error is not None:
-            raise call.error
-        call.require_current()
         reader, source = call.reader, call.reader.source
-        reader.require_retained()
-        if source._control_error is not None:
-            raise source._control_error
-        if ready():
-            return
-        if (not call.cancel_requested and call.protocol_phase in ("awaiting_prepare", "prepared")
-                and getattr(call.original.agent, "_interrupt_requested", False)):
-            # Use the ordinary request withdrawal event. The App declines an
-            # unapproved call or cancels its existing broker invocation; this
-            # worker still waits for that real result and saves it normally.
-            call.cancel_requested = True
-            call.request.events.publish(call.request.session_id, {
-                "id": call.slot._native_request_candidate_id,
-                "method": "native.invoke", "reason": "interrupted",
-            }, event_type="request.cancel")
-        if time.monotonic() >= call.deadline:
-            refuse("native_original_call_deadline_unknown")
+        with source._state_lock:
+            if call.error is not None:
+                raise call.error
+            call.require_current()
+            reader.require_retained()
+            if source._control_error is not None:
+                raise source._control_error
+            if ready():
+                return
+            if (not call.cancel_requested and call.protocol_phase in ("awaiting_prepare", "prepared")
+                    and getattr(call.original.agent, "_interrupt_requested", False)):
+                # Stop still waits for the App's real refusal or broker result.
+                call.cancel_requested = True
+                call.request.events.publish(call.request.session_id, {
+                    "id": call.slot._native_request_candidate_id,
+                    "method": "native.invoke", "reason": "interrupted",
+                }, event_type="request.cancel")
+            now = time.monotonic()
+            if now >= call.deadline and not _withdraw_timeout(call, now):
+                refuse("native_original_call_deadline_unknown")
         call.worker_event.wait(min(0.25, call.deadline - time.monotonic()))
+
+
+def _withdraw_timeout(call, now):
+    # The caller holds the private Prepare admission lock. Only an untouched
+    # request can withdraw; the App, not this worker, proves not-run.
+    if (call.cancel_requested or call.protocol_phase != "awaiting_prepare"
+            or call.phases or call.invocation is not None or call.origin is not None
+            or call.writer_lease is not None or call.slot._native_pin is not None):
+        return False
+    from gateway.session_server_requests import REQUEST_TIMEOUT_S
+    call.cancel_requested = True
+    # One bounded refusal/result exchange, not more approval time.
+    call.deadline = now + REQUEST_TIMEOUT_S
+    call.request.events.publish(call.request.session_id, {
+        "id": call.slot._native_request_candidate_id,
+        "method": "native.invoke", "reason": "timeout",
+    }, event_type="request.cancel")
+    call.timeout_requested = True
+    return True
 
 
 def _phase(call, command):

@@ -28,6 +28,7 @@ class AppCall:
         self.error = self.traceback = None
         self.sent = self.authenticated = self.acknowledged = False
         self.cancel_requested = False
+        self.timeout_requested = False
         self.send_complete = asyncio.Event()
         self.phases, self.phase_credits = {}, {}
         self.protocol_phase = "source"

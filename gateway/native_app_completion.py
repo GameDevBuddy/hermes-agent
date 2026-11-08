@@ -22,7 +22,7 @@ class OriginalCallCompletion:
         self.confirmed, self.publication = False, None
         self.declined = call.protocol_phase == "declined"
         self.refusal_phase = call.protocol_phase if call.protocol_phase in (
-            "declined", "receipt_store_full", "editor_not_connected") else None
+            "declined", "receipt_store_full", "editor_not_connected", "timed_out") else None
         call.require_current()
 
     def confirm(self):

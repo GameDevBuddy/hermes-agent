@@ -3,6 +3,7 @@ import asyncio
 import copy
 import json
 import threading
+import time
 
 import pytest
 
@@ -14,6 +15,11 @@ from tests.gateway.native_app_call_fixture import CallCase
 from tests.gateway.native_app_context_fixture import line
 from tests.gateway.native_app_producer_fixture import ProducerCase
 from tests.gateway.test_native_app_phases import EDITOR_NOT_CONNECTED_ERROR, RECEIPT_STORE_FULL_ERROR, bound_exchange
+
+TIMEOUT_ERROR = {
+    "code": -32044,
+    "message": "Editor request timed out; not run. You can continue chatting.",
+}
 
 
 class ContinuingProducerCase(ProducerCase):
@@ -34,34 +40,44 @@ class ContinuingProducerCase(ProducerCase):
     (RECEIPT_STORE_FULL_ERROR, "receipt_store_full"),
     (EDITOR_NOT_CONNECTED_ERROR, "editor_not_connected"),
     (DECLINE, "declined"),
-], ids=["receipt-store-full", "editor-not-connected", "user-stop"])
+    (TIMEOUT_ERROR, "timed_out"),
+], ids=["receipt-store-full", "editor-not-connected", "user-stop", "approval-timeout"])
 def test_preparation_refusal_saves_ordinary_error_and_next_request_works(monkeypatch, tmp_path, error, phase):
     case = ContinuingProducerCase(monkeypatch, tmp_path)
     try:
         case.begin()
-        if phase == "declined":
-            case.agent._interrupt_requested = True
-
-            async def wait_for_stop():
-                for _ in range(100):
-                    notices = [f for f in case.canonical_frames if f["params"]["type"] == "request.cancel"]
-                    if notices:
-                        assert len(notices) == 1
-                        assert notices[0]["params"]["session_id"] == "s"
-                        assert notices[0]["params"]["payload"] == {
-                            "id": case.slot._native_request_candidate_id,
-                            "method": "native.invoke", "reason": "interrupted",
-                        }
-                        return
-                    await asyncio.sleep(.01)
-                pytest.fail("Stop did not withdraw the pending native request")
-
-            case.run(wait_for_stop())
+        if phase in ("declined", "timed_out"):
+            withdrawn = threading.Event()
+            case.live.event_stream.observers.add(
+                lambda frame: withdrawn.set() if frame["params"]["type"] == "request.cancel" else None)
+            before = time.monotonic()
+            with case.source._state_lock:
+                if phase == "declined":
+                    case.agent._interrupt_requested = True
+                else:
+                    case.call.deadline = before - 1
+                case.call.worker_event.set()
+            assert withdrawn.wait(5), "Pending native request was not withdrawn"
+            notices = [f for f in case.canonical_frames if f["params"]["type"] == "request.cancel"]
+            assert len(notices) == 1
+            assert notices[0]["params"]["session_id"] == "s"
+            assert notices[0]["params"]["payload"] == {
+                "id": case.slot._native_request_candidate_id,
+                "method": "native.invoke", "reason": "interrupted" if phase == "declined" else "timeout",
+            }
+            if phase == "timed_out":
+                assert before + requests.REQUEST_TIMEOUT_S <= case.call.deadline
+                assert case.call.deadline <= time.monotonic() + requests.REQUEST_TIMEOUT_S
+                assert case.call.error is None and case.call.decline_frame is None
+                assert case.call.completion is None and case.result is None
         frame = {"jsonrpc": "2.0", "id": case.slot._native_request_candidate_id,
                  "error": dict(error)}
 
         async def original_response():
+            from gateway.native_app_result import resolve
             assert case.connection is not None
+            assert not resolve(object(), frame)
+            assert case.call.decline_frame is None
             case.connection._resolve_response(frame)
 
         case.run(original_response())
@@ -69,7 +85,8 @@ def test_preparation_refusal_saves_ordinary_error_and_next_request_works(monkeyp
         assert case.worker_error is None and case.control_error is None
         assert case.result is not None and case.message is not None
         assert json.loads(case.result) == {
-            "error": "native_request_declined" if phase == "declined" else phase, "isError": True,
+            "error": {"declined": "native_request_declined", "timed_out": "native_request_timed_out"}.get(phase, phase),
+            "isError": True,
             "message": error["message"], "replayAllowed": False,
         }
         first_call, first_slot = case.call, case.slot
@@ -137,8 +154,8 @@ def test_preparation_refusal_saves_ordinary_error_and_next_request_works(monkeyp
 
 
 @pytest.mark.parametrize("copied", [False, True], ids=["same-request-alias", "copied-request"])
-@pytest.mark.parametrize("error", [DECLINE, RECEIPT_STORE_FULL_ERROR, EDITOR_NOT_CONNECTED_ERROR],
-                         ids=["decline", "receipt-store-full", "editor-not-connected"])
+@pytest.mark.parametrize("error", [DECLINE, RECEIPT_STORE_FULL_ERROR, EDITOR_NOT_CONNECTED_ERROR, TIMEOUT_ERROR],
+                         ids=["decline", "receipt-store-full", "editor-not-connected", "timeout"])
 def test_original_native_response_refuses_foreign_request_identity(monkeypatch, tmp_path, copied, error):
     case = CallCase(monkeypatch, tmp_path)
 
@@ -171,5 +188,122 @@ def test_original_native_response_refuses_foreign_request_identity(monkeypatch, 
 
     try:
         bound_exchange(case, invalid)
+    finally:
+        case.close()
+
+
+def expire_approval(case):
+    withdrawn = threading.Event()
+    case.live.event_stream.observers.add(
+        lambda frame: withdrawn.set() if frame["params"]["type"] == "request.cancel" else None)
+    with case.source._state_lock:
+        case.call.deadline = time.monotonic() - 1
+        case.call.worker_event.set()
+    assert withdrawn.wait(5), "Deadline did not withdraw the unanswered approval"
+    with case.source._state_lock:
+        assert case.call.cancel_requested and case.call.timeout_requested
+        assert case.call.protocol_phase == "awaiting_prepare" and case.call.error is None
+        return case.call.deadline
+
+
+def test_timeout_withdrawal_without_app_ack_keeps_hard_failure_and_never_resets_again(monkeypatch, tmp_path):
+    case = ProducerCase(monkeypatch, tmp_path)
+    try:
+        case.begin()
+        exchange_deadline = expire_approval(case)
+        with case.source._state_lock:
+            assert case.call.deadline == exchange_deadline
+            expired = time.monotonic() - 1
+            case.call.deadline = expired
+            case.call.worker_event.set()
+        case.run(asyncio.wait_for(case.worker_done.wait(), 5))
+        assert isinstance(case.worker_error, RuntimeStoreError)
+        assert str(case.worker_error) == "native_original_call_deadline_unknown"
+        assert case.call.error is case.worker_error and case.call.deadline == expired
+        assert len([f for f in case.canonical_frames if f["params"]["type"] == "request.cancel"]) == 1
+        assert case.call.decline_frame is None and case.call.completion is None
+        assert case.result is None and case.message is None and case.keeper.blocked
+    finally:
+        case.close()
+
+
+@pytest.mark.parametrize("interrupted", [False, True], ids=["no-withdrawal", "stop-is-not-timeout"])
+def test_timeout_error_requires_actual_timeout_withdrawal(monkeypatch, tmp_path, interrupted):
+    case = CallCase(monkeypatch, tmp_path)
+
+    def invalid(current):
+        current.call.cancel_requested = interrupted
+        frame = {"jsonrpc": "2.0", "id": current.slot._native_request_candidate_id,
+                 "error": dict(TIMEOUT_ERROR)}
+        assert not current.call.timeout_requested
+        with pytest.raises(RuntimeStoreError, match="native_original_decline_unavailable") as observed:
+            current.connection._resolve_response(frame)
+        assert current.call.error is observed.value
+        assert current.call.decline_frame is None and current.call.completion is None
+        assert current.call.origin is None and current.slot._native_pin is None
+
+    try:
+        bound_exchange(case, invalid)
+    finally:
+        case.close()
+
+
+def test_prepare_racing_timeout_withdrawal_keeps_actual_result(monkeypatch, tmp_path):
+    case = ProducerCase(monkeypatch, tmp_path)
+    try:
+        case.begin()
+        exchange_deadline = expire_approval(case)
+        case.phase("prepare_native_call", 5)
+        case.run(case.notification("native_call_prepared"))
+        delivered = case.deliver_result("approved invocation actually ran")
+        case.run(case.notification("native_call_committed"))
+        for number, (command, event) in enumerate((
+            ("ack_native_call", "native_call_acknowledged"),
+            ("complete_native_call", "native_call_completed"),
+            ("release_native_call", "native_call_released")), 6):
+            case.phase(command, number)
+            case.run(case.notification(event))
+        case.run(asyncio.wait_for(case.worker_done.wait(), 5))
+        assert case.worker_error is None and case.control_error is None
+        assert case.call.deadline == exchange_deadline
+        assert case.call.result_frame is delivered and case.call.decline_frame is None
+        assert case.result == "approved invocation actually ran"
+        assert case.call.completion.refusal_phase is None and not case.call.completion.declined
+        assert require_completed_slot(case.slot) is case.call and not case.keeper.blocked
+    finally:
+        case.close()
+
+
+@pytest.mark.parametrize("timeout_response", [False, True], ids=["deadline-stays-unknown", "reject-not-run"])
+def test_prepared_call_cannot_timeout_as_not_run(monkeypatch, tmp_path, timeout_response):
+    case = ProducerCase(monkeypatch, tmp_path)
+    try:
+        case.begin()
+        if timeout_response:
+            expire_approval(case)
+        case.phase("prepare_native_call", 5)
+        case.run(case.notification("native_call_prepared"))
+        expired = time.monotonic() - 1
+        if timeout_response:
+            async def original_response():
+                assert case.connection is not None
+                with pytest.raises(RuntimeStoreError, match="native_original_decline_unavailable"):
+                    case.connection._resolve_response({"jsonrpc": "2.0",
+                        "id": case.slot._native_request_candidate_id, "error": dict(TIMEOUT_ERROR)})
+            case.run(original_response())
+        else:
+            with case.source._state_lock:
+                case.call.deadline = expired
+                case.call.worker_event.set()
+        case.run(asyncio.wait_for(case.worker_done.wait(), 5))
+        assert isinstance(case.worker_error, RuntimeStoreError)
+        if not timeout_response:
+            assert str(case.worker_error) == "native_original_call_deadline_unknown"
+            assert not case.call.cancel_requested and not case.call.timeout_requested
+            assert case.call.deadline == expired
+            assert not any(f["params"]["type"] == "request.cancel" for f in case.canonical_frames)
+        assert case.call.decline_frame is None and case.call.completion is None
+        assert case.call.writer_lease.phase == "unknown" and case.keeper.blocked
+        assert case.result is None and case.message is None
     finally:
         case.close()
