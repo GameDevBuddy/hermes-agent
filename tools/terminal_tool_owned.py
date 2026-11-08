@@ -163,25 +163,25 @@ def environment_factory(factory):
 
 def local_initializer(initializer):
     @functools.wraps(initializer)
-    def invoke(env, *args, **kwargs):
+    def invoke(self, *args, **kwargs):
         record = _building.get() or reserve("environment", initializer)
         if record is None:
-            return initializer(env, *args, **kwargs)
+            return initializer(self, *args, **kwargs)
         from tools.environments.local import LocalEnvironment
-        if type(env) is not LocalEnvironment or record.obj is not None:
+        if type(self) is not LocalEnvironment or record.obj is not None:
             refuse(record, "original-local-initializer-reentry-or-opaque-subclass")
-        bind(record, env)
-        env._gdb_terminal_owner = record
-        record.methods = tuple((name, getattr(env, name)) for name in (
+        bind(record, self)
+        self._gdb_terminal_owner = record
+        record.methods = tuple((name, getattr(self, name)) for name in (
             "execute", "init_session", "_run_bash", "_wait_for_process", "cleanup"))
         record.cleanup_attempted = record.cleanup_done = False
         record.cleanup_paths = None
         token = _building.set(record)
         record.attempted = True
         try:
-            initializer(env, *args, **kwargs)
-            require_env(env)
-            record.cleanup_paths = (env._snapshot_path, env._cwd_file)
+            initializer(self, *args, **kwargs)
+            require_env(self)
+            record.cleanup_paths = (self._snapshot_path, self._cwd_file)
             record.done = True
         except BaseException as error:
             fail(record, error)

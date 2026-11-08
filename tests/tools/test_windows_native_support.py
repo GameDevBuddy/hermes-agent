@@ -372,6 +372,24 @@ class TestLocalEnvironmentWindowsTempDir:
 
 
 
+    def test_explicit_env_keyword_reaches_child_command(self, tmp_path, monkeypatch):
+        """The owned initializer must forward env= without binding its receiver twice."""
+        from tools.environments.local import LocalEnvironment
+
+        monkeypatch.delenv("GDB_TEST_EXPLICIT_ENV", raising=False)
+        env = LocalEnvironment(
+            cwd=str(tmp_path), timeout=10,
+            env={"GDB_TEST_EXPLICIT_ENV": "explicit environment reaches child"},
+            persistent=False,
+        )
+        try:
+            result = env.execute('printf "%s" "$GDB_TEST_EXPLICIT_ENV"')
+            assert result["returncode"] == 0
+            assert result["output"] == "explicit environment reaches child"
+        finally:
+            env.cleanup()
+
+
 class TestLocalEnvironmentPathInjectionGated:
     """Sane PATH completion must stay POSIX-only."""
 
