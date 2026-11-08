@@ -1017,7 +1017,9 @@ def _process_descendants_windows(proc) -> list:
     if executable.name.lower() == "bash.exe" and ps is not None:
         output = subprocess.run(
             [str(ps), "-e"], capture_output=True, text=True, timeout=2, check=True,
-            creationflags=windows_hide_flags(),
+            # The gateway has a reader blocked on its control stdin. MSYS
+            # startup blocks if it inherits that handle, even though ps needs no input.
+            stdin=subprocess.DEVNULL, creationflags=windows_hide_flags(),
         ).stdout
         rows = [line.split() for line in output.splitlines()]
         rows = [(int(r[0]), int(r[1]), int(r[3])) for r in rows

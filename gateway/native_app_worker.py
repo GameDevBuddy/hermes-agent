@@ -20,6 +20,16 @@ def _wait(call, ready):
             raise source._control_error
         if ready():
             return
+        if (not call.cancel_requested and call.protocol_phase in ("awaiting_prepare", "prepared")
+                and getattr(call.original.agent, "_interrupt_requested", False)):
+            # Use the ordinary request withdrawal event. The App declines an
+            # unapproved call or cancels its existing broker invocation; this
+            # worker still waits for that real result and saves it normally.
+            call.cancel_requested = True
+            call.request.events.publish(call.request.session_id, {
+                "id": call.slot._native_request_candidate_id,
+                "method": "native.invoke", "reason": "interrupted",
+            }, event_type="request.cancel")
         if time.monotonic() >= call.deadline:
             refuse("native_original_call_deadline_unknown")
         call.worker_event.wait(min(0.25, call.deadline - time.monotonic()))

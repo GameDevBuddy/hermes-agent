@@ -86,6 +86,8 @@ def test_stop_running_command_and_use_same_environment(monkeypatch, tmp_path, le
 
         def spawn(args, **kwargs):
             if args[0] != "fixture-shell-not-executed":
+                if os.path.basename(args[0]).lower() == "ps.exe":
+                    assert kwargs["stdin"] is subprocess.DEVNULL
                 return real_popen(args, **kwargs)
             code = parent_code if not processes else "print('next call works')"
             kwargs["env"] = os.environ.copy()

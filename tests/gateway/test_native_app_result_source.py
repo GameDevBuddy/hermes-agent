@@ -33,11 +33,30 @@ class ContinuingProducerCase(ProducerCase):
 @pytest.mark.parametrize("error,phase", [
     (RECEIPT_STORE_FULL_ERROR, "receipt_store_full"),
     (EDITOR_NOT_CONNECTED_ERROR, "editor_not_connected"),
-], ids=["receipt-store-full", "editor-not-connected"])
+    (DECLINE, "declined"),
+], ids=["receipt-store-full", "editor-not-connected", "user-stop"])
 def test_preparation_refusal_saves_ordinary_error_and_next_request_works(monkeypatch, tmp_path, error, phase):
     case = ContinuingProducerCase(monkeypatch, tmp_path)
     try:
         case.begin()
+        if phase == "declined":
+            case.agent._interrupt_requested = True
+
+            async def wait_for_stop():
+                for _ in range(100):
+                    notices = [f for f in case.canonical_frames if f["params"]["type"] == "request.cancel"]
+                    if notices:
+                        assert len(notices) == 1
+                        assert notices[0]["params"]["session_id"] == "s"
+                        assert notices[0]["params"]["payload"] == {
+                            "id": case.slot._native_request_candidate_id,
+                            "method": "native.invoke", "reason": "interrupted",
+                        }
+                        return
+                    await asyncio.sleep(.01)
+                pytest.fail("Stop did not withdraw the pending native request")
+
+            case.run(wait_for_stop())
         frame = {"jsonrpc": "2.0", "id": case.slot._native_request_candidate_id,
                  "error": dict(error)}
 
@@ -50,14 +69,14 @@ def test_preparation_refusal_saves_ordinary_error_and_next_request_works(monkeyp
         assert case.worker_error is None and case.control_error is None
         assert case.result is not None and case.message is not None
         assert json.loads(case.result) == {
-            "error": phase, "isError": True,
+            "error": "native_request_declined" if phase == "declined" else phase, "isError": True,
             "message": error["message"], "replayAllowed": False,
         }
         first_call, first_slot = case.call, case.slot
         context, owner, keeper = case.call.context, case.owner, case.keeper
         assert first_call.terminal is frame and first_call.error is None
         assert first_call.protocol_phase == first_call.request.native_phase == phase
-        assert first_call.completion.declined is False
+        assert first_call.completion.declined is (phase == "declined")
         assert first_call.completion.refusal_phase == phase
         assert first_call.invocation is None and not first_call.phases
         assert first_call.result_frame is None and first_call.raw_result is None
@@ -71,12 +90,15 @@ def test_preparation_refusal_saves_ordinary_error_and_next_request_works(monkeyp
         assert row is not None
         stored = row[0]
         assert stored == case.message["content"]
-        assert phase in stored and "declined" not in stored
+        assert phase in stored
+        if phase != "declined":
+            assert "declined" not in stored
         assert not any(value["event"] in ("native_call_prepared", "native_call_committed", "native_call_released")
                        for value in case.events())
 
         # Model the next provider request without restarting or rebinding the chat.
         case.worker_done.clear()
+        case.agent._interrupt_requested = False
         case.wire_ready.clear()
         case.continue_chat = True
         case.next_request.set()

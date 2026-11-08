@@ -27,6 +27,7 @@ class AppCall:
         self.reader = self.frame = self.bind_task = self.bind_coroutine = self.bind_future = None
         self.error = self.traceback = None
         self.sent = self.authenticated = self.acknowledged = False
+        self.cancel_requested = False
         self.send_complete = asyncio.Event()
         self.phases, self.phase_credits = {}, {}
         self.protocol_phase = "source"
