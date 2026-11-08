@@ -119,7 +119,7 @@ def test_factory_cannot_adopt_original_object_from_another_constructor(monkeypat
     asyncio.run(scenario())
 
 
-@pytest.mark.parametrize("control", ["timeout", "interrupt", "cancel"])
+@pytest.mark.parametrize("control", ["timeout", "yield", "cancel"])
 def test_passive_controls_retain_original_process_without_signal_or_retry(monkeypatch, tmp_path, control):
     async def scenario():
         from tools.environments import local
@@ -140,8 +140,8 @@ def test_passive_controls_retain_original_process_without_signal_or_retry(monkey
             return proc
 
         monkeypatch.setattr(local.subprocess, "Popen", factory)
-        if control == "interrupt":
-            monkeypatch.setattr(interrupt, "is_interrupted", lambda: True)
+        if control == "yield":
+            monkeypatch.setattr(interrupt, "consume_yield", lambda tid: True)
         with pytest.raises((OwnedGatewayUnknown, asyncio.CancelledError)):
             env.execute("fixture command", timeout=0.005)
         original = next(record for record in source.terminal_records if record.kind == "process" and record.obj in commands)

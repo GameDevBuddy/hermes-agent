@@ -142,10 +142,34 @@ def pipe_stdin(proc, data):
 def _check_deadline(record, deadline, watch_tid):
     from tools.interrupt import is_interrupted, is_thread_interrupted, consume_yield
     record.require()
-    if is_interrupted() or is_thread_interrupted(watch_tid) or consume_yield(watch_tid):
-        owned.refuse(record, "original-terminal-interrupted-or-yielded-work-retained")
+    if is_interrupted() or is_thread_interrupted(watch_tid):
+        return True
+    if consume_yield(watch_tid):
+        owned.refuse(record, "original-terminal-yielded-work-retained")
     if time.monotonic() >= deadline:
         owned.refuse(record, "original-terminal-passive-deadline-expired")
+    return False
+
+
+def _interrupt_process(process):
+    """Stop this command's tree; only a confirmed stop is an ordinary result."""
+    import psutil
+    from tools.environments import local
+
+    require_process(process)
+    proc = process.obj
+    try:
+        descendants = psutil.Process(proc.pid).children(recursive=True)
+    except psutil.NoSuchProcess:
+        descendants = []
+    # This is the explicit Stop path, not legacy cleanup of an unknown process.
+    # Reuse the local backend's tree teardown, then still require exit and EOF.
+    (local._kill_process_windows if local._IS_WINDOWS else local._kill_process_group_posix)(proc)
+    process.methods[1](timeout=2)
+    _, alive = psutil.wait_procs(descendants, timeout=2)
+    if alive:
+        owned.refuse(process, "original-terminal-interrupted-descendant-still-running")
+    require_process(process)
 
 
 def _join_io(worker, deadline, wait):
@@ -178,6 +202,7 @@ def wait(env, proc, timeout, *, bounded_capture=False, watch_interrupt_tid=None,
     from tools.environments import base
     record.output = output if output is not None else base._new_output_collector(proc, bounded_capture)
     deadline = time.monotonic() + float(timeout)
+    interrupted = False
     try:
         record.reader_thread = base._start_drain_thread(proc, record.output)
         reader, writer = owned.find(record.reader_thread), process.writer
@@ -190,7 +215,11 @@ def wait(env, proc, timeout, *, bounded_capture=False, watch_interrupt_tid=None,
             require_process(process, record.process_origin)
             if record.polled_exit is not None:
                 break
-            _check_deadline(record, deadline, watch_interrupt_tid)
+            if _check_deadline(record, deadline, watch_interrupt_tid):
+                _interrupt_process(process)
+                interrupted = True
+                deadline = time.monotonic() + 2
+                break
             reader.finished.wait(0.005)
         record.wait_result = process.methods[1](timeout=0)
         require_process(process, record.process_origin)
@@ -203,7 +232,10 @@ def wait(env, proc, timeout, *, bounded_capture=False, watch_interrupt_tid=None,
                 or record.worker is not record.original_io[2] or not reader.eof):
             owned.refuse(record, "terminal-original-pipe-eof-not-observed")
         record.spill = record.output._spill_fh
-        record.result = env._finalize_wait_result(record.output, record.output.render(), record.wait_result)
+        rendered = record.output.render(suffix="\n[Command interrupted by user]" if interrupted else "")
+        record.result = env._finalize_wait_result(record.output, rendered, 130 if interrupted else record.wait_result)
+        if interrupted:
+            record.result["hermes_interrupted"] = True
         if record.spill is not None and record.spill.closed is not True:
             owned.refuse(record, "terminal-original-output-spill-not-closed")
         require_process(process, record.process_origin)
