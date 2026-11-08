@@ -56,7 +56,9 @@ def test_original_builtin_pipe_methods_complete_without_losing_source(monkeypatc
 
 
 @pytest.mark.parametrize("leave_survivor", [False, True])
-def test_stop_running_command_and_use_same_environment(monkeypatch, tmp_path, leave_survivor):
+@pytest.mark.parametrize("command_kind", ["python", "bash"])
+def test_stop_running_command_and_use_same_environment(monkeypatch, tmp_path, leave_survivor, command_kind):
+    import shlex
     import subprocess
     import sys
     import threading
@@ -68,6 +70,7 @@ def test_stop_running_command_and_use_same_environment(monkeypatch, tmp_path, le
     from tests.tools.terminal_owned_fixture import terminal_fixture, finish
 
     real_popen = subprocess.Popen
+    bash = local._find_bash()
     marker = tmp_path / "child.pid"
     child_code = "import time; time.sleep(60)"
     parent_code = (
@@ -86,7 +89,12 @@ def test_stop_running_command_and_use_same_environment(monkeypatch, tmp_path, le
                 return real_popen(args, **kwargs)
             code = parent_code if not processes else "print('next call works')"
             kwargs["env"] = os.environ.copy()
-            proc = real_popen([sys._base_executable, "-c", code], **kwargs)
+            args = [sys._base_executable, "-c", code]
+            if command_kind == "bash":
+                path = shlex.quote(local._windows_to_msys_path(str(marker)))
+                script = f"printf ready > {path}; sleep 60; printf done" if not processes else "printf 'next call works'"
+                args = [bash, "-c", script]
+            proc = real_popen(args, **kwargs)
             processes.append(proc)
             return proc
 
@@ -104,9 +112,12 @@ def test_stop_running_command_and_use_same_environment(monkeypatch, tmp_path, le
             until = time.monotonic() + 10
             while not cancel_watcher.wait(.01) and time.monotonic() < until:
                 if marker.exists() and marker.read_text():
-                    descendants.extend(psutil.Process(processes[0].pid).children(recursive=True))
-                    interrupt.set_interrupt(True, tid)
-                    return
+                    children = (local._process_descendants_windows(processes[0]) if local._IS_WINDOWS
+                                else psutil.Process(processes[0].pid).children(recursive=True))
+                    if children:
+                        descendants.extend(children)
+                        interrupt.set_interrupt(True, tid)
+                        return
 
         watcher = threading.Thread(target=stop_when_running)
         watcher.start()

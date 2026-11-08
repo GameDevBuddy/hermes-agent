@@ -1006,11 +1006,43 @@ def _kill_known_pids(proc, descendants) -> None:
             target.kill()
 
 
+def _process_descendants_windows(proc) -> list:
+    """Include MSYS children whose Windows parent died during fork/exec."""
+    import psutil
+    root = psutil.Process(proc.pid)
+    children = {child.pid: child for child in root.children(recursive=True)}
+    executable = Path(proc.args[0])
+    ps = next((p for p in (executable.with_name("ps.exe"), executable.parent.parent / "usr/bin/ps.exe")
+               if p.is_file()), None)
+    if executable.name.lower() == "bash.exe" and ps is not None:
+        output = subprocess.run(
+            [str(ps), "-e"], capture_output=True, text=True, timeout=2, check=True,
+            creationflags=windows_hide_flags(),
+        ).stdout
+        rows = [line.split() for line in output.splitlines()]
+        rows = [(int(r[0]), int(r[1]), int(r[3])) for r in rows
+                if len(r) >= 4 and all(r[i].isdigit() for i in (0, 1, 3))]
+        parents = {pid for pid, _, winpid in rows if winpid in {proc.pid, *children}}
+        while parents:
+            found = [(pid, winpid) for pid, ppid, winpid in rows if ppid in parents and pid not in parents]
+            parents = {pid for pid, _ in found}
+            for _, winpid in found:
+                try:
+                    child = psutil.Process(winpid)
+                    children[winpid] = child
+                    children.update((p.pid, p) for p in child.children(recursive=True))
+                except psutil.NoSuchProcess:
+                    pass
+    return list(children.values())
+
+
 def _kill_process_windows(proc) -> None:
-    """Identity-checked terminate (start time guards against PID reuse), else kill."""
+    """Stop the wrapper and its identity-checked Windows/MSYS descendants."""
     try:
-        from gateway.status import get_process_start_time, terminate_pid
-        terminate_pid(proc.pid, force=True, expected_start_time=get_process_start_time(proc.pid))
+        # MSYS exec can orphan the Win32 parent while retaining the POSIX
+        # parent in ps. taskkill /T alone misses those children and their pipes.
+        descendants = _process_descendants_windows(proc)
+        _kill_known_pids(proc, descendants)
     except Exception:
         proc.kill()
     with contextlib.suppress(subprocess.TimeoutExpired, OSError):

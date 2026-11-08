@@ -159,7 +159,8 @@ def _interrupt_process(process):
     require_process(process)
     proc = process.obj
     try:
-        descendants = psutil.Process(proc.pid).children(recursive=True)
+        descendants = (local._process_descendants_windows(proc) if local._IS_WINDOWS
+                       else psutil.Process(proc.pid).children(recursive=True))
     except psutil.NoSuchProcess:
         descendants = []
     # This is the explicit Stop path, not legacy cleanup of an unknown process.
