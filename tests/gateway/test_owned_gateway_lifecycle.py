@@ -90,8 +90,8 @@ def test_entry_cannot_replace_the_refusal_with_a_mutated_callback(source):
     assert calls == []
 
 
-def bound_settlement(source):
-    runner = SimpleNamespace(
+def bound_settlement(source, runner_type=SimpleNamespace):
+    runner = runner_type(
         _owned_gateway_source=source, session_runtime_descriptor={"state": "ready"},
         _running=True, _background_tasks=set(), _shutdown_event=asyncio.Event(),
     )
@@ -278,6 +278,42 @@ def test_supervised_cron_join_waits_for_its_real_worker_without_blocking_the_loo
         finally:
             stop.set()
             ticker.join(5)
+
+    asyncio.run(scenario())
+
+
+def test_stop_joins_real_heartbeat_poller_cooperatively(source, monkeypatch):
+    from gateway.run_goals import GatewayGoalsMixin
+    from hermes_cli import heartbeat
+    from gateway import run_heartbeat_restore
+
+    class HeartbeatRunner(GatewayGoalsMixin, SimpleNamespace):
+        pass
+
+    async def scenario():
+        settlement = bound_settlement(source, HeartbeatRunner)
+        runner = settlement.runner
+        stop_resources(settlement, monkeypatch, [])
+        polled = asyncio.Event()
+        polls = []
+
+        async def restore(value):
+            assert value._running
+            polls.append(value)
+            polled.set()
+
+        monkeypatch.setattr(heartbeat, "POLL_SECONDS", 0.01)
+        monkeypatch.setattr(run_heartbeat_restore, "restore_heartbeat_watches", restore)
+        GatewayGoalsMixin._start_heartbeat_poller(runner)
+        task = runner._heartbeat_poll_task
+        await asyncio.wait_for(polled.wait(), 5)
+        # Normal stop must join the real poller, not cancel it or drop its ref.
+        async with asyncio.timeout(5):
+            await settlement.stop()
+        assert task.done() and not task.cancelled()
+        assert task.result() is None
+        assert runner._running is False
+        assert polls == [runner]
 
     asyncio.run(scenario())
 

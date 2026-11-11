@@ -28,6 +28,8 @@ logger = logging.getLogger("gateway.run")
 class GatewayGoalsMixin:
     """Goal/heartbeat continuation, post-turn hooks and loop-wakeup watcher methods for GatewayRunner."""
 
+    _running: bool  # GatewayRunner's cooperative lifecycle flag.
+
     # ── /goal — persistent cross-turn goals (Ralph-style loop) ──────────
     def _goal_max_turns_from_config(self) -> int:
         """Configured /goal turn budget. GatewayRunner.config is a GatewayConfig dataclass, so the
@@ -204,8 +206,10 @@ class GatewayGoalsMixin:
         from hermes_cli.heartbeat import POLL_SECONDS
 
         async def _poll_loop():
-            while True:
+            while self._running:
                 await asyncio.sleep(POLL_SECONDS)
+                if not self._running:
+                    break
                 from gateway.run_heartbeat_restore import restore_heartbeat_watches
                 await restore_heartbeat_watches(self)
                 watch = getattr(self, "_heartbeat_watch", None)

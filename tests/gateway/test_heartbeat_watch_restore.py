@@ -152,6 +152,7 @@ async def test_restore_skips_session_sweep_when_no_heartbeats_exist(tmp_path, mo
 @pytest.mark.asyncio
 async def test_startup_arms_retry_poller_even_without_any_watches(monkeypatch):
     runner = GatewayRunner.__new__(GatewayRunner)
+    runner._running = True  # Post-connect services run after the gateway starts.
     runner._heartbeat_watch = {}
     runner._background_tasks = set()
     runner._ensure_hosted_room_worker = AsyncMock()
