@@ -26,13 +26,25 @@ def begin_worker_join(settlement, pools):
         raise source.unknown("shared-pool-original-settlement-required")
     if getattr(settlement, "_shared_join", None) is not None:
         raise source.unknown("shared-pool-original-worker-join-reentry")
-    claim = {"settlement": settlement, "source": source, "pools": tuple(pools), "threads": (), "done": False, "error": None}
+    claim = {"settlement": settlement, "source": source, "pools": tuple(pools), "threads": (),
+             "request_workers": (), "standalone_threads": (), "done": False, "error": None}
     settlement._shared_join = claim  # One pre-work normal attempt; failed refs/latch never reset.
     try:
         threads = tuple(thread for pool in pools if pool is not None for thread in pool._threads)
+        claim["request_workers"] = tuple((record, record.worker) for record in source.auxiliary_clients
+                                         if record is not None and record.kind == "shared-request")
+        for request, worker in claim["request_workers"]:
+            shared.require_parent(request)
+            if any(worker is thread for thread in (threading.current_thread(), source.loop_thread, *threads)):
+                continue
+            # Streaming uses a standalone request Thread, not an executor worker.
+            if not isinstance(worker, threading.Thread):
+                raise source.unknown("shared-pool-unrecognized-original-request-thread")
+            claim["standalone_threads"] += (worker,)
+            threads += (worker,)
+        claim["threads"] = threads
         if len(threads) > 256:
             raise source.unknown("shared-pool-worker-reference-capacity")
-        claim["threads"] = threads
     except BaseException as error:
         claim["error"] = error
         raise
@@ -53,6 +65,7 @@ def _validate_join(claim):
     current = (settlement.runner._executor, settlement.runner._housekeeping_executor)
     if (source.settlement is not settlement or settlement._shared_join is not claim
             or settlement.source is not source or settlement.task is not source.task
+            or any(request.worker is not worker for request, worker in claim["request_workers"])
             or any(thread.is_alive() for thread in claim["threads"])
             or any(before is not after for before, after in zip(claim["pools"], current))
             or any(thread not in claim["threads"] for pool in current if pool is not None for thread in pool._threads)):

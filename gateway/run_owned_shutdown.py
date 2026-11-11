@@ -189,6 +189,9 @@ class ManagedSettlement:
                     if any(thread.is_alive() for thread in pool._threads):
                         raise OwnedGatewayUnknown("canonical-executor-still-has-writers")
             await join_pools(self)
+            if claim is not None:
+                for thread in claim["standalone_threads"]:
+                    await join_thread(thread)
             finish_worker_join(claim)
         except BaseException as error:
             if claim is not None:
