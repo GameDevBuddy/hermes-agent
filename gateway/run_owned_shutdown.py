@@ -21,11 +21,19 @@ async def join_task(task):
 
 
 async def join_thread(thread):
+    from cron.scheduler_thread import SupervisedTickerThread
+
+    # The gateway's cron starter returns its supervised handle, not a Thread.
+    # Join the actual worker retained by that handle; shutdown has already set
+    # its stop event, so housekeeping cannot intentionally respawn the ticker.
+    ticker = thread if type(thread) is SupervisedTickerThread else None
+    if ticker is not None:
+        thread = ticker._thread
     if not isinstance(thread, threading.Thread):
         raise OwnedGatewayUnknown("unrecognized-owned-writer-thread")
     if thread.ident is not None:
         await asyncio.to_thread(thread.join)
-    if thread.is_alive():
+    if thread.is_alive() or (ticker is not None and ticker._thread is not thread):
         raise OwnedGatewayUnknown("owned-writer-did-not-finish")
 
 

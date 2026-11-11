@@ -109,7 +109,10 @@ def stop_resources(settlement, monkeypatch, events, *, work_error=None):
     settlement.authorities = object()
     settlement.cron_stop = threading.Event()
     settlement.cron = SimpleNamespace(stop=lambda: events.append("cron-stop"))
-    settlement.cron_thread = threading.Thread(target=lambda: None)
+    from cron.scheduler_thread import SupervisedTickerThread
+    settlement.cron_thread = SupervisedTickerThread(
+        settlement.cron_stop.wait, stop_event=settlement.cron_stop,
+    )
     settlement.housekeeping = threading.Thread(target=lambda: None)
     settlement.cron_thread.start()
     settlement.housekeeping.start()
@@ -245,3 +248,41 @@ def test_source_owned_thread_finishes_naturally():
     asyncio.run(shutdown.join_thread(thread))
     assert finished.is_set()
     assert not thread.is_alive()
+
+
+def test_supervised_cron_join_waits_for_its_real_worker_without_blocking_the_loop():
+    from cron.scheduler_thread import SupervisedTickerThread
+
+    async def scenario():
+        stop = threading.Event()
+        entered = threading.Event()
+        finished = threading.Event()
+
+        def tick():
+            entered.set()
+            stop.wait()
+            finished.set()
+
+        ticker = SupervisedTickerThread(tick, stop_event=stop)
+        ticker.start()
+        try:
+            await asyncio.to_thread(entered.wait)
+            joining = asyncio.create_task(shutdown.join_thread(ticker))
+            await asyncio.sleep(0)
+            assert not joining.done()
+            stop.set()
+            await asyncio.wait_for(joining, 5)
+            assert finished.is_set()
+            assert not ticker.is_alive()
+            assert ticker.restart_if_dead() is False
+        finally:
+            stop.set()
+            ticker.join(5)
+
+    asyncio.run(scenario())
+
+
+def test_join_thread_still_refuses_unrecognized_thread_shaped_objects():
+    fake = SimpleNamespace(ident=1, join=lambda: None, is_alive=lambda: False)
+    with pytest.raises(ownership.OwnedGatewayUnknown, match="writer-thread"):
+        asyncio.run(shutdown.join_thread(fake))
