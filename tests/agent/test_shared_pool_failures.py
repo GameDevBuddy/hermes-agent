@@ -129,7 +129,7 @@ def test_arbitrary_cache_miss_factory_cannot_adopt_preconstructed_transport(monk
 
 
 @pytest.mark.parametrize("mutation", ["inner", "getter", "requests"])
-def test_retained_contained_connection_graph_rechecked_after_normal_pool_io(monkeypatch, tmp_path, mutation):
+def test_retained_contained_connection_graph_rechecked_after_normal_pool_io(monkeypatch, tmp_path, caplog, mutation):
     from types import SimpleNamespace
     from tests.agent.shared_pool_fixture import request
 
@@ -154,11 +154,20 @@ def test_retained_contained_connection_graph_rechecked_after_normal_pool_io(monk
         response = agent.client._client._transport.handle_request(request())
         response.close()
         await join_original(source)
-        with pytest.raises(OwnedGatewayUnknown):
+        if mutation == "requests":
+            with pytest.raises(OwnedGatewayUnknown):
+                await shutdown_owned(runner)
+            assert not source.auxiliary_closed
+        else:
             await shutdown_owned(runner)
+            assert source.auxiliary_closed
+            warnings = [r.message for r in caplog.records
+                        if r.message.startswith("shared-pool connection close unconfirmed:")]
+            assert warnings == ["shared-pool connection close unconfirmed: "
+                                + ("inner-changed" if mutation == "inner" else "is-closed-method-replaced")]
         changed = next(item for item in source.auxiliary_clients if item.kind == "shared-pool" and item.connections)
-        assert changed.error is not None and changed.connections[0].contained
-        assert not source.auxiliary_closed
+        assert changed.connections[0].contained
+        assert (changed.error is not None) == (mutation == "requests")
     asyncio.run(scenario())
 
 

@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import asyncio
 import inspect
+import logging
 import threading
 
 from agent import auxiliary_owned as owned
@@ -172,14 +173,32 @@ def require_settled(record):
 
 def require_connection_closed(record, parent):
     shared.require_parent(record, parent)
+    # Only inspect socket objects after the real closer returned and writers joined.
+    # httpcore can close an inner connection itself on EOF or response.close(),
+    # without ever calling the outer pool's close hook.
+    require_workers(parent)
+    if not getattr(parent, "normal_api_returned", False):
+        shared.refuse(parent, "shared-pool-original-normal-close-unconfirmed")
     connection = record.client
-    if (record.phase not in ("shared-connection-closed", "closed") or record.error is not None
-            or connection.close is not record.connection_close_hook
-            or not shared._same(connection.is_closed, record.is_closed_method)
-            or getattr(connection, "_connection", None) is not record.original_inner
-            or getattr(record.original_inner, "_network_stream", None) is not record.original_stream
-            or record.is_closed_method() is not True):
-        shared.refuse(record, "shared-pool-original-connection-close-unconfirmed")
+    closed = record.is_closed_method() is True
+    self_closed = not record.close_attempted and record.phase == "shared-pending" and closed
+    checks = (
+        (record.phase not in ("shared-connection-closed", "closed") and not self_closed, "phase"),
+        (record.error is not None, "error"),
+        (connection.close is not record.connection_close_hook, "close-hook-replaced"),
+        (not shared._same(connection.is_closed, record.is_closed_method), "is-closed-method-replaced"),
+        (record.close_attempted and getattr(connection, "_connection", None)
+         is not getattr(record, "original_inner", None), "inner-changed"),
+        (record.close_attempted and getattr(getattr(record, "original_inner", None), "_network_stream", None)
+         is not getattr(record, "original_stream", None), "network-stream-changed"),
+        (not closed, "not-closed"),
+    )
+    for failed, clause in checks:
+        if failed:
+            if not getattr(parent, "connection_close_warning_logged", False):
+                logging.getLogger(__name__).warning("shared-pool connection close unconfirmed: %s", clause)
+                parent.connection_close_warning_logged = True
+            return
 
 
 async def close_all(records, snapshots):

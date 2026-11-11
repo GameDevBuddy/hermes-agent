@@ -44,6 +44,7 @@ def test_unmatched_shutdown_never_signals_or_joins_the_original_resources(source
         with pytest.raises(owned.OwnedGatewayUnknown, match="matching-shutdown"):
             await settlement.stop()
         assert not original_event.is_set() and events == []
+        settlement.cron_stop.set()  # Test cleanup: the refused stop never signalled its ticker.
         settlement.cron_thread.join()
         settlement.housekeeping.join()
 

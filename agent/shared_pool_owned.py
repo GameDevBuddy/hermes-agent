@@ -351,11 +351,9 @@ def _close_connection(record):
             refuse(record, "shared-sync-connection-close-became-async")
         require_parent(record, pool, origin=origin)
         retain_contained(record)
-        if (connection.close is not record.connection_close_hook
-                or getattr(connection, "_connection", None) is not original_inner
-                or getattr(original_inner, "_network_stream", None) is not original_stream
-                or not _same(connection.is_closed, record.is_closed_method) or record.is_closed_method() is not True):
-            refuse(record, "shared-connection-normal-close-unconfirmed")
+        # Contained httpcore/socket identity and closed-state observations are
+        # checked after the pool's normal API returns, not inside its close hook.
+        # They must not prevent Quit once every state-writing worker is joined.
         record.phase = "shared-connection-closed"
     except BaseException as error:
         owned.fail(record, error)

@@ -39,7 +39,7 @@ class GatewaySessionWatchersMixin:
 
     async def _session_housekeeping_watcher(self, interval: int = 300):
         """Reclaim resources without ending durable conversations."""
-        await asyncio.sleep(60)
+        await _interruptible_sleep(self, 60)
         while self._running:
             try:
                 await self._session_housekeeping()
@@ -215,7 +215,7 @@ class GatewaySessionWatchersMixin:
         """Refresh the /model picker's remote catalogs every TTL window. The picker itself only
         refreshes on a cold/stale open, so if nobody opens ``/model`` the cache never updates."""
         from hermes_cli.model_catalog import refresh_catalogs, refresh_interval_seconds
-        await asyncio.sleep(30)  # let startup settle
+        await _interruptible_sleep(self, 30)  # let startup settle
         while self._running:
             try:
                 await asyncio.to_thread(refresh_catalogs)
@@ -238,7 +238,7 @@ class GatewaySessionWatchersMixin:
         See #72039.
         """
         # Short initial delay so startup reconnect noise does not false-fire.
-        await asyncio.sleep(min(30.0, max(1.0, float(interval))))
+        await _interruptible_sleep(self, min(30, max(1, int(interval))))
         while self._running:
             try:
                 if (timeout := self._session_stall_timeout_seconds()) > 0:
