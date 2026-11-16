@@ -71,7 +71,7 @@ class OriginalCallCompletion:
             refuse("native_original_completion_changed")
         # The original runtime may now be draining/retired. This is a retained
         # terminal record; live execution still requires the ordinary live gates.
-        attempt.require_retained()
+        attempt.require_retained(terminal=True)
         self._require_source_retained()
         self._require_terminal()
         return self.call
@@ -82,7 +82,7 @@ class OriginalCallCompletion:
             if (type(attempt) is not SourceConstruction or attempt.value is not value
                     or attempt.phase != "ready" or attempt.error is not None):
                 refuse("native_original_completion_source_changed")
-            attempt.require_retained()
+            attempt.require_retained(terminal=True)
 
 
 def reserve(call, terminal):

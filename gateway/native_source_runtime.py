@@ -310,7 +310,9 @@ def retire_original_listener(parent, *, request_stop):
     require_capture_ready(parent)
     with parent.runtime.lock:
         parent.retiring = True
-        held = bool(parent.calls)  # includes a retained charged construction hole
+        held = bool(parent.calls) or any(
+            record.ever_native for authority in parent.runtime.authorities.values() if authority is not None
+            for record in getattr(authority, "_native_turn_retention", {}).values())
     if request_stop and held:
         from gateway.native_source_stop import reject_native_runner_stop
         reject_native_runner_stop(parent.runner)

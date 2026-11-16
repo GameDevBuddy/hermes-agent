@@ -39,6 +39,7 @@ class AppCall:
         from gateway.session_server_requests import REQUEST_TIMEOUT_S
         self.worker_thread, self.deadline = threading.current_thread(), time.monotonic() + REQUEST_TIMEOUT_S
         self.proof_credit, self.terminal, self.completion = 0, None, None
+        self.wire_credit, self.result_credit, self.source_refunded = MAX_CALL_BYTES, 0, False
 
     def failed(self, error):
         if self.error is None:

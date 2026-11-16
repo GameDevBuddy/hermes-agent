@@ -124,6 +124,9 @@ def _prune_completed_calls(source, book):
             call.completion.require_retained()
         except RuntimeStoreError:
             continue
+        from gateway.native_source_release import release_saved_call, release_turn_bridge
+        release_saved_call(call)
+        release_turn_bridge(call.original.keeper)
         records = [(key, call)] + [(phase.book_key, phase) for phase in call.phases.values()]
         # Original calls, phases and completions remain in their source/slot custody.
         for record_key, record in records:

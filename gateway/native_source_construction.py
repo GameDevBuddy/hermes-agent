@@ -49,6 +49,7 @@ class SourceConstruction:
         self.arguments, self.keywords = (), {}
         self.inputs = ()
         self.credit, self.pair_credit = SOURCE_REFERENCE_CREDIT, 0
+        self.detached = False
         self.creator = _creator()
         self.home, self.context = hermes_home_key(), contextvars.copy_context()
         self.graph = self._graph()
@@ -100,12 +101,14 @@ class SourceConstruction:
                        for var, value in self.context.items())):
             refuse("native_original_constructor_context_changed")
 
-    def require_retained(self):
+    def require_retained(self, *, terminal=False):
         expected = self.value if self.value is not None else self
         entry = self.book.get(self.key)
         retained = entry is expected if self.pair is None else (
             type(entry) is tuple and len(entry) == 2
             and entry[0] is self.pair and entry[1] is expected)
+        if terminal and self.detached and self.credit == 0:
+            retained = self.key not in self.book
         if (self.error is not None or self.connection.parent is not self.server
                 or self.server.runtime is not self.runtime or not retained
                 or getattr(self.book_owner, self.book_name) is not self.book
@@ -141,7 +144,7 @@ class SourceConstruction:
 def require_constructed(value):
     attempt = getattr(value, "_source_construction", None)
     if (type(attempt) is not SourceConstruction or attempt.value is not value
-            or attempt.phase != "ready" or attempt.error is not None):
+            or attempt.phase != "ready" or attempt.error is not None or attempt.credit == 0):
         refuse("native_original_constructor_incomplete")
     # Consumers may observe from another original thread; the factory's creator
     # check belongs around construction, not a new thread-affinity permission.

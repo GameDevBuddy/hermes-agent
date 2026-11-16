@@ -87,6 +87,7 @@ def _native_result(call, frame):
         if runtime.bytes + credit > MAX_SOURCE_REFERENCE_BYTES:
             refuse("native_original_result_capacity")
         runtime.bytes += credit
+        call.result_credit = credit
     if len(result["rawResult"].encode("utf-8")) > MAX_TEXT_BYTES:
         refuse("native_original_result_capacity")
     call.result_frame, call.raw_result = frame, result["rawResult"]

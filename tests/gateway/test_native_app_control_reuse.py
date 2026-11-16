@@ -16,12 +16,14 @@ from tests.waiting import wait_until
 @pytest.mark.parametrize("first_timeout", [False, True], ids=["twenty-successes", "completed-timeout-then-nineteen"])
 def test_twenty_calls_keep_original_worker_context_and_saved_results(monkeypatch, tmp_path, first_timeout):
     case = ContinuingProducerCase(monkeypatch, tmp_path)
-    case.request_count = 20
+    count = 20
+    case.request_count = count
     completed = []
+    source_budget = None
     try:
         case.begin()
         context, owner, keeper = case.call.context, case.owner, case.keeper
-        for index in range(20):
+        for index in range(count):
             if index:
                 case.worker_done.clear()
                 case.wire_ready.clear()
@@ -53,7 +55,7 @@ def test_twenty_calls_keep_original_worker_context_and_saved_results(monkeypatch
                 case.phase("prepare_native_call", 100 + index * 10 + 2,
                            invocationId=invocation, invocationSequence=index + 1)
                 case.run(case.notification("native_call_prepared"))
-                case.deliver_result(f"native result {index}")
+                case.deliver_result("native result")
                 case.run(case.notification("native_call_committed"))
                 for offset, (command, event) in enumerate((
                     ("ack_native_call", "native_call_acknowledged"),
@@ -70,6 +72,14 @@ def test_twenty_calls_keep_original_worker_context_and_saved_results(monkeypatch
             completed.append(case.call)
             assert require_completed_slot(case.slot) is case.call
             assert not keeper.blocked and case.db._native_read_gate.lease is None
+            if not first_timeout:
+                runtime = case.call.original.connection.parent.runtime
+                if source_budget is None:
+                    source_budget = runtime.bytes
+                assert runtime.bytes == source_budget
+                assert len(runtime.assistants) == 1
+                assert len(runtime.bridges) == 1
+                assert len(case.call.original.connection.parent.calls) == 1
         assert wait_until(lambda: case.call.reader.active is None, timeout=5)
         for call in completed:
             assert require_completed_slot(call.slot) is call

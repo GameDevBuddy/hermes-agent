@@ -77,6 +77,11 @@ class NativeTurnRetention:
             if asyncio.current_task() is not self.task or asyncio.get_running_loop() is not self.loop:
                 raise RuntimeStoreError("native_original_task_changed")
         self.completed = True
+        if held:
+            from gateway.native_source_release import release_saved_call, release_turn_bridge
+            for slot in tuple(self.slots.values()):
+                release_saved_call(slot._source_constructions["app_call"])
+            release_turn_bridge(self)
 
 
 def native_retention_for_owner(owner):

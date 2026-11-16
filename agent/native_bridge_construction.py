@@ -40,6 +40,7 @@ class BridgeConstruction(CommitConstruction):
         self.lower_callbacks, self.tool_callbacks = (), []
         self.creator_thread = self.profile_home = None
         self.owner_refs = self.scope_json = self.source_refs = None
+        self.source_refunded = False
 
     def prepare(self):
         from agent.native_receipt_origin import frozen_json
@@ -113,12 +114,16 @@ class BridgeConstruction(CommitConstruction):
                 or self.retention is not None and self.retention.bridge_construction is not self):
             raise RuntimeStoreError("native_original_bridge_constructor_owner_changed")
 
-    def require_source(self):
+    def require_source(self, *, terminal=False):
         if self.source is None:
             raise RuntimeStoreError("native_original_bridge_source_unavailable")
-        if (self.runtime.bridges is not self.book or self.book.get(id(self.owner)) is not self
+        retained = (id(self.owner) not in self.book if terminal and self.source_refunded
+                    else self.book.get(id(self.owner)) is self and not self.source_refunded)
+        if (self.runtime.bridges is not self.book or not retained
                 or not _same(self.source_refs, self.current_source_refs())):
             raise RuntimeStoreError("native_original_bridge_constructor_source_changed")
+        if terminal:
+            return  # Retained identity only; never a live execution gate.
         from gateway.native_source_runtime import require_original_connection
         if require_original_connection(self.arguments[0]) is not self.source:
             raise RuntimeStoreError("native_original_bridge_source_changed")
