@@ -109,7 +109,32 @@ def same_originals(actual, expected):
     return len(actual) == len(expected) and all(left is right for left, right in zip(actual, expected))
 
 
+def _prune_completed_calls(source, book):
+    from gateway.native_app_call import AppCall
+    from gateway.native_app_completion import OriginalCallCompletion
+    reader = source._control_reader
+    # receive() still checks its book cell after the worker confirms completion.
+    if reader is None or reader.active is not None:
+        return
+    for key, call in list(book.items()):
+        if (type(call) is not AppCall or call.error is not None
+                or type(call.completion) is not OriginalCallCompletion or not call.completion.confirmed):
+            continue
+        try:
+            call.completion.require_retained()
+        except RuntimeStoreError:
+            continue
+        records = [(key, call)] + [(phase.book_key, phase) for phase in call.phases.values()]
+        # Original calls, phases and completions remain in their source/slot custody.
+        for record_key, record in records:
+            if book.get(record_key) is record:
+                del book[record_key]
+                source._app_context_credit -= RECORD_CREDIT
+
+
 def reserve(source, book, key, credit):
+    if book is source._app_context_requests:
+        _prune_completed_calls(source, book)
     # A failed construction leaves a charged hole. These are nominal metadata
     # bounds, not allocator, kernel, execution or writer-exclusion evidence.
     if (key in book or len(book) >= MAX_CONTEXTS

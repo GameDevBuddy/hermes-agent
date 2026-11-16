@@ -23,16 +23,20 @@ TIMEOUT_ERROR = {
 
 
 class ContinuingProducerCase(ProducerCase):
-    """Two model requests on the same chat worker, owner, context and socket."""
+    """Model requests on the same chat worker, owner, context and socket."""
 
     def __init__(self, monkeypatch, tmp_path):
         self.next_request = threading.Event()
         self.continue_chat = False
+        self.request_count = 2
         super().__init__(monkeypatch, tmp_path)
 
     def _worker(self):
         super()._worker()
-        if self.worker_error is None and self.next_request.wait(15) and self.continue_chat:
+        for _ in range(self.request_count - 1):
+            if self.worker_error is not None or not self.next_request.wait(15) or not self.continue_chat:
+                break
+            self.next_request.clear()
             super()._worker()
 
 
