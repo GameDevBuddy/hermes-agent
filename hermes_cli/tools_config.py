@@ -834,8 +834,9 @@ def _toolset_has_keys(
         config = load_config()
     if ts_key == "vision":
         try:
-            from agent.auxiliary_client import resolve_vision_provider_client
-            return resolve_vision_provider_client()[1] is not None
+            from agent.auxiliary_client import aux_probe_mode, resolve_vision_provider_client
+            with aux_probe_mode():
+                return resolve_vision_provider_client()[1] is not None
         except Exception:
             return False
     if ts_key in {"web", "image_gen", "video_gen", "tts", "stt", "browser"}:

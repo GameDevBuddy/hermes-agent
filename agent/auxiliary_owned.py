@@ -136,6 +136,8 @@ def reserve(kind, factory):
     source.require_child_work()
     global _claim_count
     with source._state_lock:
+        from agent.shared_pool_reclaim import prune_completed
+        prune_completed(source)
         if (source.auxiliary_closing_attempted or len(source.auxiliary_clients) >= MAX_CLAIMS
                 or source.auxiliary_credit + CLAIM_CREDIT > MAX_BYTES):
             raise source.unknown("original-auxiliary-construction-capacity-or-shutdown")
