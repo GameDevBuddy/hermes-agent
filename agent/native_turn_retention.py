@@ -1,4 +1,4 @@
-"""Retain the original canonical claim and source objects; never release native holds."""
+"""Keep original native claims until their calls and claim exit are confirmed complete."""
 from __future__ import annotations
 
 import asyncio
@@ -6,6 +6,8 @@ import threading
 import weakref
 
 from hermes_state_runtime import RuntimeStoreError
+
+MAX_NATIVE_TURNS = 1024
 
 
 class NativeTurnRetention:
@@ -21,6 +23,7 @@ class NativeTurnRetention:
         self.use_credit = 0
         self.ever_native = self.blocked = False
         self.completed = False
+        self.exited = False
 
     def note_owner(self, owner):
         with self.lock:
@@ -82,6 +85,27 @@ class NativeTurnRetention:
             for slot in tuple(self.slots.values()):
                 release_saved_call(slot._source_constructions["app_call"])
             release_turn_bridge(self)
+        self.exited = True
+        self.return_credit()
+
+    def return_credit(self):
+        """Detach only a confirmed exited claim; original terminal objects remain valid."""
+        with self.lock:
+            if (not self.exited or self.blocked or self.bridge_construction_error is not None
+                    or (self.bridge_construction is not None
+                        and self.bridge_construction.error is not None)):
+                return
+            from gateway.native_app_worker import require_completed_slot
+            from gateway.native_source_release import release_saved_call, release_turn_bridge
+            calls = [require_completed_slot(slot) for slot in self.slots.values()]
+            if any(call.reader.active is not None for call in calls):
+                return
+            for call in calls:
+                release_saved_call(call)
+            release_turn_bridge(self)
+            key = (self.ref.session_id, self.generation)
+            if self.authority._native_turn_retention.get(key) is self:
+                del self.authority._native_turn_retention[key]
 
 
 def native_retention_for_owner(owner):
@@ -93,6 +117,13 @@ def native_retention_for_owner(owner):
 
 
 def capture_claim_retention(authority, ref, live, row):
+    # A terminal phase reader may have become idle after its claim exited.
+    # Unknown or incomplete claims keep their entry and their original objects.
+    for retained in tuple(authority._native_turn_retention.values()):
+        try:
+            retained.return_credit()
+        except RuntimeStoreError:
+            pass
     key = (ref.session_id, row["generation"])
     task, loop = asyncio.current_task(), asyncio.get_running_loop()
     old = authority._native_turn_retention.get(key)
@@ -100,7 +131,7 @@ def capture_claim_retention(authority, ref, live, row):
         if old.live is not live or old.task is not task or old.loop is not loop:
             raise RuntimeStoreError("native_original_task_changed")
         return old
-    if len(authority._native_turn_retention) >= 1024:
+    if len(authority._native_turn_retention) >= MAX_NATIVE_TURNS:
         raise RuntimeStoreError("native_original_turn_capacity")
     value = NativeTurnRetention(authority, ref, live, row["generation"], task, loop)
     authority._native_turn_retention[key] = value
