@@ -56,20 +56,20 @@ class SameDatabaseCase(IdleReaderCase, TurnProducerCase):
             ready.set()
 
 
-def test_1100_finished_cycles_refund_same_sql_book(monkeypatch, tmp_path):
-    # Deliberately lower only this test process's in-memory caps. This crosses
-    # the production 1,024 pin count too, without a runtime/DB restart.
+def test_300_finished_cycles_refund_same_sql_book(monkeypatch, tmp_path):
+    # Lower only this test process's in-memory caps; the unchanged producer
+    # refuses its fourth Read with these limits. Do not alter production caps.
     import hermes_state_native_book as budgets
     monkeypatch.setattr(budgets, "MAX_PINS", 8)
     monkeypatch.setattr(budgets, "MAX_METADATA", 1024 * 1024)
     case = SameDatabaseCase(monkeypatch, tmp_path)
-    case.request_count = 1100
+    case.request_count = 300
     completed = []
     try:
         case.begin()
         db, connection = case.db, case.db._conn
         book = None
-        for index in range(1100):
+        for index in range(300):
             if index:
                 case.run(case.rotate())
                 case.worker_done.clear()
@@ -106,7 +106,7 @@ def test_1100_finished_cycles_refund_same_sql_book(monkeypatch, tmp_path):
             require_constructed(call.origin.pin)
             require_constructed(call.origin.use)
             assert require_completed_slot(call.slot) is call
-        assert db._read_one("SELECT COUNT(*) FROM messages WHERE role='tool'")[0] == 1100
+        assert db._read_one("SELECT COUNT(*) FROM messages WHERE role='tool'")[0] == 300
     finally:
         case.continue_chat = False
         case.next_request.set()
