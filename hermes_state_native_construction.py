@@ -35,6 +35,7 @@ class SQLConstruction:
         self.db, self.credit, self.book = db, credit, book
         self.slot, self.source, self.pin, self.request = slot, source, pin, request
         self.value = self.foreign_value = self.error = None
+        self.detached = False
         self.phase, self.arguments, self.keywords = "reserved", (), {}
         self.factory = self.initializer = None
         self.connection, self.db_lock, self.writer = db._conn, db._lock, db._execute_write
@@ -74,18 +75,30 @@ class SQLConstruction:
         self.require_retained()
 
     def require_retained(self):
+        if self.detached:
+            from gateway.native_app_worker import require_completed_slot
+            call = require_completed_slot(self.slot)
+            if (self.book is None or self.value is None or self.error is not None or self.phase != "ready"
+                    or self.value.phase != "released" or self.book.error is not None
+                    or id(self.slot) in self.book.pins
+                    or call.completion.pin is not self.slot._native_pin
+                    or call.completion.use is not self.slot._native_active_use):
+                raise NativeSQLFailure("native_sql_constructor_detached_changed")
+            pin = self.value if self.pin is None else self.pin
+            if pin.pin_id in self.book.uses:
+                raise NativeSQLFailure("native_sql_constructor_detached_changed")
         if self.book is None:
             expected = self.value if self.value is not None else self
             if self.db._native_pin_book is not expected:
                 raise NativeSQLFailure("native_sql_constructor_book_displaced")
         elif self.pin is None:
             pair = self.book.pins.get(id(self.slot))
-            if (type(pair) is not tuple or pair[0] is not self.slot or pair[1] is not self.value
+            if ((not self.detached and (type(pair) is not tuple or pair[0] is not self.slot or pair[1] is not self.value))
                     or self.slot._native_pin is not self.value
                     or self.retention.pins.get(id(self.slot)) is not self.value):
                 raise NativeSQLFailure("native_sql_constructor_pin_displaced")
         else:
-            if (self.book.uses.get(self.pin.pin_id) is not self.value or self.pin.active_use is not self.value
+            if ((not self.detached and self.book.uses.get(self.pin.pin_id) is not self.value) or self.pin.active_use is not self.value
                     or self.slot._native_active_use is not self.value or self.request.native_active_use is not self.value
                     or self.retention.active_uses.get(id(self.slot)) is not None
                     or (self.value is not None and self.retention.active_uses.get(id(self.value)) is not self.value)):
@@ -152,6 +165,8 @@ def remember_error(value, error):
 
 
 def require_fresh_pin(slot, source):
+    if slot._native_pin is not None:
+        raise NativeSQLFailure("native_sql_pin_reentry_or_capacity")
     if source.db._native_pin_init_error is not None:
         raise NativeSQLFailure("native_sql_book_construction_consumed")
     book = source.db._native_pin_book

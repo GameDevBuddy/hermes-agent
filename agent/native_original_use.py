@@ -231,7 +231,9 @@ def check_local_sql_after_io(use, raw_result, projection):
         with use.pin.db._lock:
             # Retain these bounded original references even if the inspection debit fails.
             use.raw_result, use.projection = raw_result, projection
-            use.pin.book.charge(4 * (len(raw_result) + len(projection)) + 65536)
+            credit = 4 * (len(raw_result) + len(projection)) + 65536
+            use.pin.book.charge(credit)
+            use.credit += credit
             raw, persisted = text_digest(raw_result), text_digest(projection)
             if raw is None or persisted is None:
                 raise RuntimeStoreError("native_original_result_capacity")

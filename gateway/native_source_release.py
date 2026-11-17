@@ -22,6 +22,8 @@ def release_saved_call(call):
         for attempt in attempts:
             attempt.require_retained()
         assistant_attempt = _assistant_release_attempt(original.assistant, original.keeper, call)
+        from hermes_state_native_book import refund_saved_call
+        refund_saved_call(call)
         # No callbacks/IO after validation. Slot custody remains for terminal checks;
         # only the live server index is detached, never history or another budget.
         for attempt in attempts:

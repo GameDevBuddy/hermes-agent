@@ -130,14 +130,56 @@ def guarded_write(book, callback):
         raise
 
 
+def refund_saved_call(call):
+    """Detach only confirmed idle originals; preserve their terminal custody graph."""
+    from hermes_state_native_construction import require_constructed
+    completion = call.completion
+    completion.require_retained()
+    if completion.refusal_phase is not None or call.reader.active is not None:
+        return
+    pin, use = completion.pin, completion.use
+    book = pin.book
+    with book.lock:
+        require_constructed(book)
+        require_constructed(pin)
+        require_constructed(use)
+        pa, ua = pin._sql_construction, use._sql_construction
+        if pa.detached and ua.detached:
+            return
+        if (book.error is not None or pa.detached or ua.detached
+                or pin.phase != "released" or use.phase != "released"
+                or use.pin is not pin or pin.source_slot is not call.slot or use.slot is not call.slot
+                or pin.source_original_call is not call.original or use.original_source_call is not call.original
+                or book.pins.get(id(call.slot)) != (call.slot, pin) or book.uses.get(pin.pin_id) is not use
+                or type(pin.credit) is not int or pin.credit < pa.credit
+                or type(use.credit) is not int or use.credit < ua.credit
+                or book.bytes < 4096 + pin.credit + use.credit
+                or use.keeper.use_credit < ua.credit):
+            raise NativeSQLFailure("native_sql_saved_refund_changed")
+        # No SQL, callbacks, or object destruction: the original slot/keeper retain
+        # both values and construction attempts for all later terminal validation.
+        del book.pins[id(call.slot)]
+        del book.uses[pin.pin_id]
+        book.bytes -= pin.credit + use.credit
+        use.keeper.use_credit -= ua.credit
+        pa.detached = ua.detached = True
+
+
 def require_no_local_native_hold(db):
     gate = getattr(db, "_native_read_gate", None)
     if gate is not None and gate.lease is not None:
         raise NativeSQLFailure("native_writer_original_database_retirement_held")
     if getattr(db, "_native_pin_init_consumed", False):
         book = db._native_pin_book
-        if type(book) is not NativeSQLBook or book.error is not None or not book.pins:
+        if (type(book) is not NativeSQLBook or book.error is not None
+                or db._native_pin_init_error is not None):
             raise NativeSQLFailure("native_sql_original_database_retirement_held")
+        from hermes_state_native_construction import require_constructed
+        require_constructed(book)
+        if not book.pins:
+            if book.uses or book.bytes != 4096:
+                raise NativeSQLFailure("native_sql_original_database_retirement_held")
+            return
         from gateway.native_app_worker import require_completed_slot
         for slot, pin in book.pins.values():
             if pin is None or pin.phase != "released":

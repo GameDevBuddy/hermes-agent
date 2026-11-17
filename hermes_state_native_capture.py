@@ -95,7 +95,7 @@ def precharge_inspections(pin, conn):
                        (pending.assistant["row_id"], pending.owner.scope["session_id"])).fetchone()
     if row is None or any(value is not None and not 0 <= value <= MAX_TEXT_BYTES for value in row):
         refuse("native_sql_row_capacity")
-    # Four bounded rereads, paid before decoding/copying any row. No refund/replay.
+    # Four bounded rereads, paid before decoding/copying; held until saved completion.
     credit = 16 * sum(value or 0 for value in row) + 65536
     pin.book.charge(credit)
     pin.credit += credit

@@ -135,6 +135,118 @@ def _prune_completed_calls(source, book):
                 source._app_context_credit -= RECORD_CREDIT
 
 
+def _closed_context_records(source, stage):
+    """Validate metadata custody without asking a retired selection to be current."""
+    from gateway.native_app_context_construction import ContextConstruction, _payload, _record_refs, _source_refs
+    from gateway.native_capture_construction import CaptureConstruction, require_capture_ready
+    from gateway.native_source_runtime import OriginalSourceConnection
+
+    if type(stage) is not ContextStage or stage.source is not source or stage.error is not None:
+        return
+    original = stage.original
+    if type(original) is not OriginalSourceConnection:
+        return
+    c, runtime = original.connection, original.parent.runtime
+    capture = getattr(original, "_source_capture_construction", None)
+    if (type(capture) is not CaptureConstruction or capture.value is not original
+            or runtime.runner is not source.runner or runtime.loop is not source.loop
+            or runtime.connections.get(id(c)) is not original
+            or c._gdb_original_source_connection is not original
+            or c.actor is not original.actor or c.authority is not original.authority
+            or c.transport is not original.transport or stage.transport is not original.transport
+            or original.transport._ws is not original.ws or original.transport._loop is not source.loop
+            or original.transport._closed is not True):
+        return
+    require_capture_ready(original)
+    # A closed socket is not a terminal native call. Even unpublished assistant
+    # work and charged construction holes keep their original context custody.
+    if (any(call is None or call.connection is original for call in original.parent.calls.values())
+            or any(assistant is None or assistant.connection is original for assistant in runtime.assistants.values())
+            or any(bridge is None or bridge.source is original for bridge in runtime.bridges.values())):
+        return
+    request = stage.request
+    if (type(request) is not ContextRequest or request.source is not source or request.stage is not stage
+            or request.error is not None or not request.acknowledged
+            or request.reader is not source._control_reader
+            or type(request.task) is not asyncio.Task or not request.task.done() or request.task.cancelled()
+            or request.task.get_loop() is not source.loop or request.task.get_coro() is not request.coroutine
+            or request.task.exception() is not None or request.future is None or not request.future.done()
+            or request.future.cancelled() or request.future.exception() is not None):
+        return
+    value = request.association
+    slot = (id(c), stage.selection.ref.session_id)
+    if (type(value) is not OriginalAppContext or value.error is not None or not value.bound
+            or value.request is not request or value.stage is not stage or value.selection is None
+            or not value.selection.same_selection(stage.selection)
+            or c._gdb_original_app_contexts.get(slot[1]) is not value
+            or source._app_context_slots.get(slot) != stage.nonce
+            or source._app_context_stages.get(stage.nonce) is not stage
+            or source._app_context_requests.get(request.frame["requestId"]) is not request):
+        return
+    records = [("stage", stage.nonce, stage, RECORD_CREDIT + len(stage.selection.tools_json)),
+               ("request", request.frame["requestId"], request, RECORD_CREDIT),
+               ("association", request.frame["requestId"], value, 0)]
+    for kind, key, record, credit in records:
+        attempt = getattr(record, "_context_construction", None)
+        if (type(attempt) is not ContextConstruction or attempt.source is not source
+                or attempt.kind != kind or attempt.key != key or attempt.value is not record
+                or attempt.phase != "ready" or attempt.error is not None or attempt.credit != credit
+                or type(attempt.arguments) is not tuple
+                or not record._context_initialized
+                or not same_originals(attempt.source_refs, _source_refs(source))
+                or not same_originals(attempt.record_refs, _record_refs(kind, attempt.arguments))
+                or attempt.payload != _payload(kind, attempt.arguments)):
+            return
+        attempt.require_retained()
+        if kind == "stage":
+            actual = (record.source, record.original, record.selection, record.params)
+            expected = attempt.arguments[1:]
+        elif kind == "request":
+            actual = (record.reader, record.frame, record.source)
+            expected = (attempt.arguments[1], attempt.arguments[2], source)
+        else:
+            actual = (record.request, record.stage)
+            expected = (attempt.arguments[1], attempt.stage)
+        if not same_originals(actual, expected):
+            return
+    # An AppCall (including an incomplete one) may still need this association.
+    for record in source._app_context_requests.values():
+        if record is request:
+            continue
+        if record is None or getattr(record, "context", None) is value:
+            return
+    return c, slot, records
+
+
+def prune_closed_contexts(source):
+    # Caller holds the original source state lock, on its original event loop.
+    # Do not race reader receive()/publication or an in-progress constructor.
+    reader = source._control_reader
+    if (source.phase != "bound" or source._shutdown or source._control_closed
+            or source._app_context_error is not None or reader is None or reader.active is not None):
+        return
+    from gateway.native_app_context_construction import require_no_context_constructor
+    require_no_context_constructor(source)
+    runtime = source.runner._gdb_original_source_runtime
+    with runtime.lock:
+        for stage in list(source._app_context_stages.values()):
+            try:
+                retained = _closed_context_records(source, stage)
+            except RuntimeStoreError:
+                continue  # Changed/failed originals stay charged; never repair or adopt.
+            if retained is None:
+                continue
+            c, slot, records = retained
+            # All original custody has been checked. No IO, callbacks or await below.
+            del c._gdb_original_app_contexts[slot[1]]
+            del source._app_context_slots[slot]
+            del source._app_context_stages[stage.nonce]
+            del source._app_context_requests[stage.request.frame["requestId"]]
+            for kind, key, record, credit in records:
+                del source._app_context_constructions[(kind, key)]
+                source._app_context_credit -= credit
+
+
 def reserve(source, book, key, credit):
     if book is source._app_context_requests:
         _prune_completed_calls(source, book)

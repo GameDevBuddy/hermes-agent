@@ -40,6 +40,8 @@ async def stage(connection, ref, params):
     with source._state_lock:
         from gateway.native_app_context_construction import begin_context_construction, require_no_context_constructor
         require_no_context_constructor(source)
+        from gateway.native_app_context_records import prune_closed_contexts
+        prune_closed_contexts(source)
         slot = (id(connection), ref.session_id)
         if slot in source._app_context_slots:
             refuse("native_original_app_context_capacity_or_reentry")
