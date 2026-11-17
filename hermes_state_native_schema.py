@@ -109,6 +109,22 @@ def _active_links(condition):
             "WHERE (" + condition + ") AND " + _unreleased("p") + ")")
 
 
+def _pin_capacity():
+    # Released pins remain immutable replay/history evidence, but no longer
+    # consume the live durable metadata budget. Unreleased rows always count.
+    return _trigger("pin_capacity", "INSERT", "native_original_pins",
+                    f"(SELECT COUNT(*) FROM native_original_pins p WHERE {_unreleased('p')})>={MAX_PINS} OR "
+                    f"(SELECT COALESCE(SUM(p.credit_bytes),0) FROM native_original_pins p "
+                    f"WHERE {_unreleased('p')})+NEW.credit_bytes>{MAX_METADATA}")
+
+
+def _legacy_pin_capacity():
+    return _trigger("pin_capacity", "INSERT", "native_original_pins",
+                    f"(SELECT COUNT(*) FROM native_original_pins)>={MAX_PINS} OR "
+                    "(SELECT COALESCE(SUM(credit_bytes),0) FROM native_original_pins)+NEW.credit_bytes>"
+                    f"{MAX_METADATA}")
+
+
 def native_schema():
     statements = [
         "CREATE TABLE native_original_pins (pin_id TEXT PRIMARY KEY, owner_id TEXT NOT NULL, "
@@ -144,9 +160,7 @@ def native_schema():
                           "AND tool_call_uid=NEW.tool_call_uid)")
         statements.append(_trigger(table + "_replace", "INSERT", table, duplicate))
     statements.extend((
-        _trigger("pin_capacity", "INSERT", "native_original_pins",
-                 f"(SELECT COUNT(*) FROM native_original_pins)>={MAX_PINS} OR "
-                 f"(SELECT COALESCE(SUM(credit_bytes),0) FROM native_original_pins)+NEW.credit_bytes>{MAX_METADATA}"),
+        _pin_capacity(),
         _trigger("scope_bound", "INSERT", "native_pin_scopes",
                  "NOT EXISTS(SELECT 1 FROM native_original_pins p WHERE p.pin_id=NEW.pin_id AND "
                  "(SELECT COUNT(*) FROM native_pin_scopes s WHERE s.pin_id=p.pin_id)<p.scope_count AND "
@@ -171,8 +185,25 @@ def require_schema(conn):
         raise RuntimeStoreError("native_sql_schema_changed")
 
 
+def _upgrade_legacy_pin_capacity(conn):
+    """Replace only the exact historical capacity trigger in a known schema."""
+    expected = {sql.split()[2]: sql for sql in native_schema()}
+    name = "native_sql_pin_capacity"
+    row = conn.execute("SELECT sql FROM sqlite_master WHERE name=?", (name,)).fetchone()
+    if row is None or row[0] == expected[name] or row[0] != _legacy_pin_capacity():
+        return
+    others = {key: value for key, value in expected.items() if key != name}
+    actual = dict(conn.execute("SELECT name,sql FROM sqlite_master WHERE name IN ("
+                               + ",".join("?" for _ in others) + ")", tuple(others)))
+    if actual != others:
+        return  # require_schema below retains the unknown/tampered schema refusal.
+    conn.execute("DROP TRIGGER native_sql_pin_capacity")
+    conn.execute(expected[name])
+
+
 def install_schema(conn):
     if conn.execute("SELECT 1 FROM sqlite_master WHERE name LIKE 'native_%' LIMIT 1").fetchone():
+        _upgrade_legacy_pin_capacity(conn)
         require_schema(conn)
         return
     for statement in native_schema():
