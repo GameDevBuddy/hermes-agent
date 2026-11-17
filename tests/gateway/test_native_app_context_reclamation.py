@@ -30,6 +30,30 @@ def reconnect(case):
     case.run(open_socket())
 
 
+def test_closed_saved_chat_rebinds_same_live_session_without_old_selection(case):
+    assert "result" in case.stage()
+    live = case.live
+
+    def reopen():
+        old_selection = live.event_stream._gdb_native_selection
+        old_context = case.connection._gdb_original_app_contexts[case.ref.session_id]
+        close_socket(case)
+        reconnect(case)
+        nonce = "d" * 64
+        assert "result" in case.stage(nonce=nonce)
+        case.source._control_reader.bind(case.frame(nonce=nonce, requestId="0" * 25 + "9"))
+        async def check():
+            fresh = require_context(case.connection, case.ref)
+            assert fresh is not old_context and fresh.selection is not old_selection
+            assert fresh.selection.live is live and fresh.selection.current()
+            assert live.event_stream._gdb_native_selection is fresh.selection
+            assert not old_selection.current()
+        case.run(check())
+
+    case.read(before_shutdown=reopen)
+    assert len([event for event in case.events() if event.get("event") == "native_context_bound"]) == 2
+
+
 def test_same_source_serves_more_than_64_closed_settled_contexts(case):
     assert "result" in case.stage()
 
@@ -143,16 +167,19 @@ def test_closed_stage_without_completed_bind_stays_charged(case):
     assert case.source._app_context_credit == credit + RECORD_CREDIT + len(stage.selection.tools_json)
 
 
-def test_reclamation_preserves_original_event_stream_selection(case):
+@pytest.mark.parametrize("replacement", [False, True])
+def test_reclamation_retires_only_closed_original_event_stream_selection(case, replacement):
     case.stage()
 
     def reclaim():
         original_selection = case.live.event_stream._gdb_native_selection
         close_socket(case)
+        marker = object() if replacement else original_selection
+        case.live.event_stream._gdb_native_selection = marker
         reconnect(case)
         assert "result" in case.stage(nonce="c" * 64)
         assert NONCE not in case.source._app_context_stages
-        assert case.live.event_stream._gdb_native_selection is original_selection
+        assert getattr(case.live.event_stream, "_gdb_native_selection", None) is (marker if replacement else None)
         assert not original_selection.current()
 
     case.read(before_shutdown=reclaim)

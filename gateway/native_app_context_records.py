@@ -237,6 +237,13 @@ def prune_closed_contexts(source):
             if retained is None:
                 continue
             c, slot, records = retained
+            # The closed socket's immutable selection is live metadata, not
+            # saved chat history. Retiring it permits a fresh bind of that same
+            # live session; never replace a different/current selection.
+            stream = stage.selection.live.event_stream
+            with stream.lock:
+                if getattr(stream, "_gdb_native_selection", None) is stage.request.association.selection:
+                    del stream._gdb_native_selection
             # All original custody has been checked. No IO, callbacks or await below.
             del c._gdb_original_app_contexts[slot[1]]
             del source._app_context_slots[slot]
